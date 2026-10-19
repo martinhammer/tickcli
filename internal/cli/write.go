@@ -129,7 +129,7 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 		name, short, example = "untick", "Untick a yes/no track", ""
 	}
 	cmd := &cobra.Command{
-		Use:     name + ` <track> [-d date] [--note text [--append] | --append-note text] [--force-duplicate]`,
+		Use:     name + ` <track> [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]`,
 		Short:   short,
 		Example: example,
 		Args:    args(1, 1),
@@ -164,7 +164,7 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 
 func (a *App) setCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set <track> <n> [-d date] [--note text [--append] | --append-note text] [--force-duplicate]",
+		Use:   "set <track> <n> [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]",
 		Short: "Set a counter to n (0 removes the count)",
 		Args:  args(2, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -202,7 +202,7 @@ func (a *App) setCmd() *cobra.Command {
 
 func (a *App) addCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add <track> [n] [-d date] [--note text [--append] | --append-note text] [--force-duplicate]",
+		Use:   "add <track> [n] [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]",
 		Short: "Add n (default 1) to a counter; negative takes away",
 		Args:  args(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -285,7 +285,7 @@ func noteText(note *string, appended bool) string {
 func (a *App) noteCmd() *cobra.Command {
 	var clear, appendFlag, force bool
 	cmd := &cobra.Command{
-		Use:   "note <track> <text> [--append [--force-duplicate]] | --clear [-d date]",
+		Use:   "note <track> (<text> [--append [--force-duplicate]] | --clear) [-d date]",
 		Short: "Set, replace, append to (--append) or delete (--clear) a day's note",
 		Example: `  tickcli note Exercise "Ran 5 km"
   tickcli note Exercise "https://www.strava.com/activities/…" --append`,
