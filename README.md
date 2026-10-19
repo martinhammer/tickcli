@@ -3,12 +3,12 @@ Tickcli (pronounced "tickly") is the command line client for [Tickbuddy](https:/
 
 It can serve many use cases, broadly falling into the following three categories:
 - Command line as an additional interface alongside [web](https://github.com/martinhammer/tickbuddy) and [mobile](https://github.com/martinhammer/tickdroid)
-- Support for scripting automations: monitor your scheduled jobs via Tickbuddy
+- Scripting automation, e.g. monitor your jobs via Tickbuddy
 - Building block of [TickLLMe](https://github.com/martinhammer/tickllme), the MCP server and Claude plugin for Tickbuddy 
 
 ## Examples
 
-```bash
+```
 $ tickcli tick exercise
 ✓ Exercise · Sun 18 Oct
 
@@ -43,7 +43,7 @@ Option 1: Download the binary for your system from the [releases page](https://g
 
 Option 2: Alternatively, with Go installed:
 
-```bash
+```
 go install github.com/martinhammer/tickcli/cmd/tickcli@latest
 ```
 
@@ -54,7 +54,7 @@ go install github.com/martinhammer/tickcli/cmd/tickcli@latest
 
 The default method is to use [Login flow v2](https://docs.nextcloud.com/server/stable/developer_manual/client_apis/LoginFlow/index.html#login-flow-v2):
 
-```bash
+```
 tickcli login cloud.example.com
 ```
 
@@ -62,7 +62,7 @@ This will print a link to grant access via a browser. Add `--qr` for a QR code t
 
 Alternatively, create an app password yourself and paste it. Note: **app password**, never your user's actual password.
 
-```bash
+```
 tickcli login cloud.example.com --paste
 ```
 
@@ -72,14 +72,14 @@ A URL without a scheme gets `https://`. Plain `http://` is refused except for `l
 
 `tickcli status` shows who is signed in and where the credentials are.
 
-```bash
+```
 $ tickcli status
 Signed in as user6 at http://nextcloud.local · Tickbuddy 2.3.0 · credentials in keychain
 ```
 
 ### Signing out
 
-```bash
+```
 tickcli logout
 ```
 
