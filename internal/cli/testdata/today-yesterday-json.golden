@@ -1,0 +1,1 @@
+{"date":"2026-10-17","tracks":[{"track":"Exercise","trackId":1,"type":"boolean","value":true},{"track":"Made someone smile","trackId":2,"type":"boolean","value":false},{"track":"Cups of coffee","trackId":3,"type":"counter","value":2},{"track":"Nightly backup","trackId":4,"type":"boolean","value":false},{"track":"Diary","trackId":5,"type":"boolean","value":false}]}

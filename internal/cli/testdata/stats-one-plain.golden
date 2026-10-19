@@ -1,0 +1,18 @@
+track	Exercise
+total	212
+weeklyMean	4.3
+last7	5
+previous7	4
+peak7	7
+current	streak 3
+upToYesterday	false
+longestStreak	21
+longestStreakFrom	2026-03-02
+longestStreakTo	2026-03-22
+longestBreak	9
+longestBreakFrom	2026-08-04
+longestBreakTo	2026-08-12
+firstTick	2025-01-03
+lastTick	2026-10-18
+maxValue	1
+minValue	1
