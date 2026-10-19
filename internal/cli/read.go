@@ -204,9 +204,17 @@ func (a *App) weekCmd() *cobra.Command {
 				w = max(w, width(flat(r.Track)))
 			}
 			w += 2
+			// Day columns fit the weekday headings and the widest value.
+			col := 2
+			for _, r := range rows {
+				for _, c := range r.Days {
+					col = max(col, width(symbol(c.Value)))
+				}
+			}
+			col++
 			var head strings.Builder
 			for _, d := range days {
-				head.WriteString(pad(d.Weekday().String()[:2], 3))
+				head.WriteString(pad(d.Weekday().String()[:2], col))
 			}
 			a.printf("%s%s\n", strings.Repeat(" ", w), a.paint(dim, strings.TrimRight(head.String(), " ")))
 			for _, r := range rows {
@@ -214,10 +222,7 @@ func (a *App) weekCmd() *cobra.Command {
 				line.WriteString(pad(flat(r.Track), w))
 				for _, c := range r.Days {
 					sym := symbol(c.Value)
-					if !c.Value.IsBool() && c.Value.Int() >= 10 {
-						sym = "9+"
-					}
-					line.WriteString(a.paintSymbol(sym) + strings.Repeat(" ", 3-width(sym)))
+					line.WriteString(a.paintSymbol(sym) + strings.Repeat(" ", col-width(sym)))
 				}
 				line.WriteString(" " + runText(r.stats))
 				a.printf("%s\n", line.String())

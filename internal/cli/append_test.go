@@ -80,7 +80,7 @@ func TestAppendOutput(t *testing.T) {
 	e := newEnv(t).seed()
 	id := e.ids["backup"] // note "Finished 02:14, 3.2 GB"
 	r := e.run(true, "", "tick", "Nightly backup", "--append-note", "checked")
-	if r.code != 0 || r.stdout != "✓ Nightly backup · Sun 18 Oct  📝 Finished 02:14, 3.2 GB …\n" {
+	if r.code != 0 || r.stdout != "✓ Nightly backup · Sun 18 Oct  📝 Finished 02:14, 3.2 GB\n    checked\n" {
 		t.Errorf("pretty: %+v", r)
 	}
 	r = e.run(false, "", "add", "Cups of coffee", "--note", "decaf", "--append", "--json")
@@ -92,11 +92,14 @@ func TestAppendOutput(t *testing.T) {
 	if err := json.Unmarshal([]byte(r.stdout), &out); r.code != 0 || err != nil || out.Note == nil || *out.Note != "Finished 02:14, 3.2 GB\nchecked\nmore" {
 		t.Errorf("note --append json: %+v", r)
 	}
-	if r := e.run(true, "", "note", "Nightly backup", "more", "--append"); r.code != 0 || r.stdout != "Nightly backup · Sun 18 Oct  📝 Finished 02:14, 3.2 GB …\n" {
+	if r := e.run(true, "", "note", "Nightly backup", "more", "--append"); r.code != 0 || r.stdout != "Nightly backup · Sun 18 Oct  📝 Finished 02:14, 3.2 GB\n    checked\n    more\n" {
 		t.Errorf("note --append pretty: %+v", r)
 	}
 	if n, _ := e.srv.Note(id, "2026-10-18"); n != "Finished 02:14, 3.2 GB\nchecked\nmore" {
 		t.Errorf("note = %q", n)
+	}
+	if r := e.run(true, ""); r.code != 0 || !strings.HasSuffix(r.stdout, "  ✓  Nightly backup\n       Finished 02:14, 3.2 GB\n       checked\n       more\n") {
+		t.Errorf("today pretty: %+v", r)
 	}
 }
 

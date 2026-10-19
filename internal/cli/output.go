@@ -102,13 +102,9 @@ func flat(s string) string {
 	return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(clean(s))
 }
 
-// firstLine is a note's first line, with … when there is more.
-func firstLine(s string) string {
-	s = clean(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimRight(s[:i], " \t") + " …"
-	}
-	return s
+// noteLines is a note's lines, cleaned for a terminal.
+func noteLines(s string) []string {
+	return strings.Split(strings.TrimRight(clean(s), "\n"), "\n")
 }
 
 // The day as pretty output shows it. Go has no locale data, so names are
@@ -161,7 +157,8 @@ func plural(n int, one, many string) string {
 	return fmt.Sprintf("%d %s", n, many)
 }
 
-// runText is the current run as the dashboard widget words it.
+// runText is the current run, worded as the dashboard widget words a streak
+// that ends yesterday.
 func runText(st *tickbuddy.Stats) string {
 	if st == nil || st.Current == nil {
 		return "no ticks yet"
@@ -173,7 +170,7 @@ func runText(st *tickbuddy.Stats) string {
 		}
 		return fmt.Sprintf("%d-day streak", c.Length)
 	}
-	return fmt.Sprintf("%d-day break so far", c.Length)
+	return fmt.Sprintf("%d-day break", c.Length)
 }
 
 // runPlain is the current run for plain output: "streak 3", "break 1" or

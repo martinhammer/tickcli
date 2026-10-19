@@ -91,7 +91,9 @@ func (a *App) runToday(ctx context.Context) error {
 		sym := symbol(r.Value)
 		a.printf("  %s%s  %s\n", strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym), flat(r.Track))
 		if r.Note != nil {
-			a.printf("%s%s\n", strings.Repeat(" ", w+6), a.paint(dim, firstLine(*r.Note)))
+			for _, l := range noteLines(*r.Note) {
+				a.printf("%s%s\n", strings.Repeat(" ", w+6), a.paint(dim, l))
+			}
 		}
 	}
 	return nil

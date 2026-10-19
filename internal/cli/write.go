@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -270,8 +271,8 @@ func (a *App) wrote(t tickbuddy.Track, day tickbuddy.Date, r tickbuddy.Result, s
 	return nil
 }
 
-// noteText shows the note after a write; appended says whether the write
-// appended rather than replaced.
+// noteText shows the note after a write, its further lines indented below;
+// appended says whether the write appended rather than replaced.
 func noteText(note *string, appended bool) string {
 	if note == nil || *note == "" {
 		if appended {
@@ -279,7 +280,7 @@ func noteText(note *string, appended bool) string {
 		}
 		return "📝 note removed"
 	}
-	return "📝 " + firstLine(*note)
+	return "📝 " + strings.Join(noteLines(*note), "\n    ")
 }
 
 func (a *App) noteCmd() *cobra.Command {
