@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/martinhammer/tickcli/internal/fakeserver"
+	"github.com/martinhammer/tickcli/tickbuddy/tickbuddytest"
 )
 
 var day = Date{2026, time.October, 18}
 
-func setup(t *testing.T) (*fakeserver.Server, *Client, *[]time.Duration) {
+func setup(t *testing.T) (*tickbuddytest.Server, *Client, *[]time.Duration) {
 	t.Helper()
-	s := fakeserver.New()
+	s := tickbuddytest.New()
 	t.Cleanup(s.Close)
 	c := New(Account{URL: s.URL, User: s.User, AppPassword: s.Password}, WithUserAgent("Test/1"))
 	var waits []time.Duration
@@ -186,7 +186,7 @@ func TestEveryCall(t *testing.T) {
 		t.Fatalf("Export = %s, %v", raw, err)
 	}
 
-	s.Update(ex, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-01" })
+	s.Update(ex, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
 	tracks, _ := c.Tracks(ctx, false)
 	all, _ := c.Tracks(ctx, true)
 	if len(tracks) != 2 || len(all) != 3 {
@@ -228,8 +228,8 @@ func TestArchivedResult(t *testing.T) {
 	ctx := context.Background()
 	ex := s.AddTrack("Nightly backup", "boolean")
 	cof := s.AddTrack("Coffee", "counter")
-	s.Update(ex, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-01" })
-	s.Update(cof, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-01" })
+	s.Update(ex, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
+	s.Update(cof, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
 
 	if r, err := c.SetYesNo(ctx, ex, day, true, nil); err != nil || !r.Archived {
 		t.Errorf("SetYesNo archived: %+v %v", r, err)

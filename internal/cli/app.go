@@ -77,7 +77,7 @@ func Main() int {
 		Store:        tickbuddy.DefaultStore(),
 		Hostname:     host,
 		ReadPassword: func() ([]byte, error) { return term.ReadPassword(int(os.Stdin.Fd())) },
-		PollInterval: 2 * time.Second,
+		PollInterval: tickbuddy.LoginPollInterval,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -218,10 +218,19 @@ func (a *App) userAgent() string { return "Tickcli/" + version }
 
 // client returns a client for the stored (or environment) credentials.
 func (a *App) client() *tickbuddy.Client {
+	return tickbuddy.New(a.credentials(), a.clientOptions()...)
+}
+
+// credentials are looked up once per run; fail reads them too.
+func (a *App) credentials() *tickbuddy.StoredCredentials {
 	if a.creds == nil {
 		a.creds = tickbuddy.NewStoredCredentials(a.Store)
 	}
-	return tickbuddy.New(a.creds, tickbuddy.WithUserAgent(a.userAgent()), tickbuddy.WithRetries(a.opts.retries))
+	return a.creds
+}
+
+func (a *App) clientOptions() []tickbuddy.Option {
+	return []tickbuddy.Option{tickbuddy.WithUserAgent(a.userAgent()), tickbuddy.WithRetries(a.opts.retries)}
 }
 
 // connect returns a client whose capabilities are read, so Has works.

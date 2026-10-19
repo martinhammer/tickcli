@@ -15,8 +15,19 @@ import (
 	"time"
 )
 
-// LoginTimeout is how long the server keeps a Login Flow v2 open.
+// LoginTimeout is how long the server keeps a Login Flow v2 open, and so how
+// long Wait waits.
 const LoginTimeout = 20 * time.Minute
+
+// LoginPollInterval is how often Wait asks the server whether access was
+// granted, unless told otherwise.
+const LoginPollInterval = 2 * time.Second
+
+// ErrLoginExpired: nobody granted access within LoginTimeout.
+var ErrLoginExpired = errors.New("nobody granted access within 20 minutes, and the server has forgotten the sign-in")
+
+// loginTimeout is LoginTimeout, shortened by tests.
+var loginTimeout = LoginTimeout
 
 // NormalizeURL turns what a person typed into a server URL: https:// is added
 // when there is no scheme, and a trailing slash is dropped. Plain http:// is
@@ -96,16 +107,29 @@ func StartLogin(ctx context.Context, serverURL, userAgent string, httpClient *ht
 	return f, nil
 }
 
-// Wait polls every interval until the person has granted access, ctx ends
-// (give it LoginTimeout at most) or the server refuses. A network failure
-// while polling is tried again at the next interval.
+// Wait polls every interval (LoginPollInterval when 0) until the person has
+// granted access, the server refuses or ctx ends. After LoginTimeout, when
+// the server has forgotten the flow, it gives up with ErrLoginExpired. A
+// network failure while polling is tried again at the next interval.
 func (f *LoginFlow) Wait(ctx context.Context, interval time.Duration) (Account, error) {
+	if interval <= 0 {
+		interval = LoginPollInterval
+	}
+	parent := ctx
+	ctx, cancel := context.WithTimeout(ctx, loginTimeout)
+	defer cancel()
+	stopped := func() error {
+		if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return ErrLoginExpired
+		}
+		return ctx.Err()
+	}
 	form := url.Values{"token": {f.token}}
 	for {
 		status, body, err := f.post(ctx, f.endpoint, form)
 		switch {
 		case ctx.Err() != nil:
-			return Account{}, ctx.Err()
+			return Account{}, stopped()
 		case err != nil, status == http.StatusNotFound, status >= 500:
 			// not yet, or a hiccup
 		case status == http.StatusOK:
@@ -122,7 +146,7 @@ func (f *LoginFlow) Wait(ctx context.Context, interval time.Duration) (Account, 
 			return Account{}, &Error{Kind: ErrBadRequest, Status: status, Message: fmt.Sprintf("the server stopped the sign-in (answered %d)", status)}
 		}
 		if err := sleepCtx(ctx, interval); err != nil {
-			return Account{}, err
+			return Account{}, stopped()
 		}
 	}
 }

@@ -45,24 +45,12 @@ lines from it.`,
 				return err
 			}
 
-			c := tickbuddy.New(acct, tickbuddy.WithUserAgent(a.userAgent()), tickbuddy.WithRetries(a.opts.retries))
-			caps, err := c.Capabilities(ctx)
-			if err != nil {
-				if acct.CreatedByLink && !errors.Is(err, tickbuddy.ErrUnauthorized) {
-					// Don't leave an app password behind that nothing uses.
-					_ = c.RevokeAppPassword(ctx)
-				}
-				if errors.Is(err, tickbuddy.ErrUnauthorized) {
-					return &codedError{errors.New("the server refused this user and app password; nothing was stored"), exitAuth}
-				}
-				return fmt.Errorf("%w; nothing was stored", err)
+			caps, src, err := a.Store.SignIn(ctx, acct, a.clientOptions()...)
+			if errors.Is(err, tickbuddy.ErrUnauthorized) {
+				return &codedError{errors.New("the server refused this user and app password; nothing was stored"), exitAuth}
 			}
-			src, err := a.Store.Save(ctx, acct)
 			if err != nil {
-				if acct.CreatedByLink {
-					_ = c.RevokeAppPassword(ctx)
-				}
-				return fmt.Errorf("couldn't store the credentials: %w", err)
+				return err
 			}
 
 			if a.mode() == jsonMode {
@@ -110,11 +98,9 @@ func (a *App) linkLogin(ctx context.Context, url string, qr bool) (tickbuddy.Acc
 		fmt.Fprintln(a.Stderr)
 	}
 	fmt.Fprintf(a.Stderr, "Waiting for you to grant access (Ctrl-C to stop)…\n")
-	wctx, cancel := context.WithTimeout(ctx, tickbuddy.LoginTimeout)
-	defer cancel()
-	acct, err := flow.Wait(wctx, a.PollInterval)
-	if errors.Is(err, context.DeadlineExceeded) {
-		return tickbuddy.Account{}, errors.New("nobody granted access within 20 minutes, and the server has forgotten the sign-in; run `tickcli login` again")
+	acct, err := flow.Wait(ctx, a.PollInterval)
+	if errors.Is(err, tickbuddy.ErrLoginExpired) {
+		return tickbuddy.Account{}, fmt.Errorf("%w; run `tickcli login` again", err)
 	}
 	return acct, err
 }
@@ -166,37 +152,28 @@ func (a *App) logoutCmd() *cobra.Command {
 		Args:  args(0, 0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if _, ok, _ := a.Store.FromEnvironment(); ok {
-				a.say("The TICKBUDDY_* environment variables are set, so there is nothing stored to forget.")
-				return nil
+			_, inEnv, _ := a.Store.FromEnvironment()
+			res, err := a.Store.Logout(ctx, local, a.clientOptions()...)
+			if errors.Is(err, tickbuddy.ErrNotRevoked) {
+				return fmt.Errorf("%w (run `tickcli logout --local` to only forget it, then remove it under Settings → Security → Devices & sessions)", err)
 			}
-			acct, _, err := a.Store.LoadStored(ctx)
-			if errors.Is(err, tickbuddy.ErrNoCredentials) {
-				a.say("Not signed in; there is nothing to forget.")
-				return nil
-			}
-			revoked := false
-			if err == nil && acct.CreatedByLink && !local {
-				c := tickbuddy.New(acct, tickbuddy.WithUserAgent(a.userAgent()), tickbuddy.WithRetries(a.opts.retries))
-				switch err := c.RevokeAppPassword(ctx); {
-				case err == nil:
-					revoked = true
-				case errors.Is(err, tickbuddy.ErrUnauthorized):
-					// already revoked on the server
-				default:
-					return fmt.Errorf("couldn't revoke the app password on the server, so nothing was forgotten: %w (run `tickcli logout --local` to only forget it, then remove it under Settings → Security → Devices & sessions)", err)
-				}
-			}
-			if _, err := a.Store.Delete(ctx); err != nil {
-				return fmt.Errorf("couldn't forget the credentials: %w", err)
+			if err != nil {
+				return err
 			}
 			switch {
-			case revoked:
+			case !res.SignedIn && inEnv:
+				a.say("There was nothing stored to forget.")
+			case !res.SignedIn:
+				a.say("Not signed in; there is nothing to forget.")
+			case res.Revoked:
 				a.say("Signed out; the app password was revoked on the server.")
-			case err == nil && !acct.CreatedByLink:
+			case res.Pasted:
 				a.say("Signed out. The app password you pasted still works on the server; remove it under Settings → Security → Devices & sessions if nothing else uses it.")
 			default:
 				a.say("Signed out.")
+			}
+			if inEnv {
+				a.say("The TICKBUDDY_* environment variables are still set, so Tickcli keeps using them.")
 			}
 			return nil
 		},
@@ -221,35 +198,20 @@ func (a *App) statusCmd() *cobra.Command {
 		Short: "Show who is signed in, where, and what the server supports",
 		Args:  args(0, 0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			c := a.client()
-			acct, src, err := a.creds.Account(ctx)
+			st, err := tickbuddy.ReadStatus(cmd.Context(), a.credentials(), a.clientOptions()...)
 			if err != nil {
 				return err
-			}
-			caps, err := c.Capabilities(ctx)
-			if err != nil {
-				return err
-			}
-			var missing []string
-			for _, f := range tickbuddy.Features {
-				if !caps.Features[f] {
-					missing = append(missing, f)
-				}
 			}
 			switch a.mode() {
 			case jsonMode:
-				if missing == nil {
-					missing = []string{}
-				}
-				return a.writeJSON(map[string]any{"user": acct.User, "url": acct.URL, "tickbuddy": caps.Version, "credentials": src.String(), "missingFeatures": missing})
+				return a.writeJSON(map[string]any{"user": st.Account.User, "url": st.Account.URL, "tickbuddy": st.Version, "credentials": st.Source.String(), "missingFeatures": st.Missing})
 			case plain:
-				a.printf("user\t%s\nurl\t%s\ntickbuddy\t%s\ncredentials\t%s\nmissingFeatures\t%s\n", flat(acct.User), flat(acct.URL), flat(caps.Version), src, strings.Join(missing, ","))
+				a.printf("user\t%s\nurl\t%s\ntickbuddy\t%s\ncredentials\t%s\nmissingFeatures\t%s\n", flat(st.Account.User), flat(st.Account.URL), flat(st.Version), st.Source, strings.Join(st.Missing, ","))
 				return nil
 			}
-			a.printf("Signed in as %s at %s · Tickbuddy %s · credentials in %s\n", clean(acct.User), clean(acct.URL), clean(caps.Version), src)
-			if len(missing) > 0 {
-				a.printf("This server lacks %s; %s.\n", strings.Join(missing, ", "), missingHint(missing))
+			a.printf("Signed in as %s at %s · Tickbuddy %s · credentials in %s\n", clean(st.Account.User), clean(st.Account.URL), clean(st.Version), st.Source)
+			if len(st.Missing) > 0 {
+				a.printf("This server lacks %s; %s.\n", strings.Join(st.Missing, ", "), missingHint(st.Missing))
 			}
 			return nil
 		},

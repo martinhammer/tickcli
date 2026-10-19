@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"net/http"
 	"os"
@@ -14,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/martinhammer/tickcli/internal/fakeserver"
 	"github.com/martinhammer/tickcli/tickbuddy"
+	"github.com/martinhammer/tickcli/tickbuddy/tickbuddytest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -25,7 +26,7 @@ var now = time.Date(2026, time.October, 18, 12, 0, 0, 0, time.Local)
 
 type env struct {
 	t   *testing.T
-	srv *fakeserver.Server
+	srv *tickbuddytest.Server
 	env map[string]string
 	dir string
 	ids map[string]int
@@ -33,7 +34,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	s := fakeserver.New()
+	s := tickbuddytest.New()
 	t.Cleanup(s.Close)
 	e := &env{t: t, srv: s, dir: t.TempDir(), ids: map[string]int{}}
 	e.env = map[string]string{
@@ -52,8 +53,8 @@ func (e *env) seed() *env {
 	e.ids["backup"] = s.AddTrack("Nightly backup", "boolean")
 	e.ids["diary"] = s.AddTrack("Diary", "boolean")
 	e.ids["old"] = s.AddTrack("Old habit", "boolean")
-	s.Update(e.ids["diary"], func(t *fakeserver.Track) { t.Private = true })
-	s.Update(e.ids["old"], func(t *fakeserver.Track) { t.ArchivedAt = "2026-09-01" })
+	s.Update(e.ids["diary"], func(t *tickbuddytest.Track) { t.Private = true })
+	s.Update(e.ids["old"], func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-09-01" })
 	s.SetTick(e.ids["ex"], "2026-10-18", 1)
 	s.SetTick(e.ids["coffee"], "2026-10-18", 3)
 	s.SetTick(e.ids["backup"], "2026-10-18", 1)
@@ -341,14 +342,14 @@ func TestArchivedInBetween(t *testing.T) {
 	orig := srv.Config.Handler
 	srv.Config.Handler = wrap(orig, func(path string) {
 		if strings.HasSuffix(path, "/ticks/set") || strings.HasSuffix(path, "/notes/set") {
-			srv.Update(id, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-18" })
+			srv.Update(id, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-18" })
 		}
 	})
 	r := e.run(false, "", "tick", "Made someone smile")
 	if r.code != 1 || !strings.Contains(r.stderr, "is archived") {
 		t.Errorf("tick: %+v", r)
 	}
-	srv.Update(id, func(t *fakeserver.Track) { t.ArchivedAt = "" })
+	srv.Update(id, func(t *tickbuddytest.Track) { t.ArchivedAt = "" })
 	srv.SetNote(id, "2026-10-18", "kept")
 	r = e.run(false, "", "note", "Made someone smile", "--clear")
 	if r.code != 1 || !strings.Contains(r.stderr, "is archived") {
@@ -506,9 +507,25 @@ func TestLoginLinkAndLogout(t *testing.T) {
 }
 
 func TestLogoutWithEnvironment(t *testing.T) {
+	const still = "The TICKBUDDY_* environment variables are still set, so Tickcli keeps using them.\n"
 	e := newEnv(t)
-	if r := e.run(true, "", "logout"); r.code != 0 || !strings.Contains(r.stdout, "nothing stored to forget") {
-		t.Errorf("%+v", r)
+	if r := e.run(true, "", "logout"); r.code != 0 || r.stdout != "There was nothing stored to forget.\n"+still {
+		t.Errorf("nothing stored: %+v", r)
+	}
+
+	// a stored login is still forgotten, and its link-created password revoked
+	_ = os.WriteFile(filepath.Join(e.dir, "machine-id"), []byte("0123456789abcdef0123456789abcdef\n"), 0o444)
+	a := tickbuddy.Account{URL: e.srv.URL, User: "martin", AppPassword: "app-pass", CreatedByLink: true}
+	store := &tickbuddy.Store{Getenv: func(string) string { return "" }, Dir: filepath.Join(e.dir, "tickcli"), MachineIDPath: filepath.Join(e.dir, "machine-id"), UID: 1000, GOOS: "linux"}
+	if _, err := store.Save(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	r := e.run(true, "", "logout")
+	if r.code != 0 || r.stdout != "Signed out; the app password was revoked on the server.\n"+still || !e.srv.Revoked {
+		t.Errorf("stored: %+v revoked=%v", r, e.srv.Revoked)
+	}
+	if _, _, err := store.LoadStored(context.Background()); !errors.Is(err, tickbuddy.ErrNoCredentials) {
+		t.Errorf("not forgotten: %v", err)
 	}
 }
 

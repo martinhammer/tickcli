@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/martinhammer/tickcli/internal/fakeserver"
+	"github.com/martinhammer/tickcli/tickbuddy/tickbuddytest"
 )
 
 func TestLoginFlow(t *testing.T) {
-	s := fakeserver.New()
+	s := tickbuddytest.New()
 	defer s.Close()
 	s.LoginPolls = 2
 	ctx := context.Background()
@@ -37,7 +37,7 @@ func TestLoginFlow(t *testing.T) {
 }
 
 func TestLoginFlowTimeout(t *testing.T) {
-	s := fakeserver.New()
+	s := tickbuddytest.New()
 	defer s.Close()
 	s.LoginPolls = 1 << 30
 	f, err := StartLogin(context.Background(), s.URL, "Tickcli", nil)

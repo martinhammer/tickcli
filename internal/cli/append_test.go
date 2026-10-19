@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/martinhammer/tickcli/internal/fakeserver"
+	"github.com/martinhammer/tickcli/tickbuddy/tickbuddytest"
 )
 
 // The Strava recipe: running it again for the same activity changes nothing.
@@ -134,7 +134,7 @@ func TestAppendArchivedInBetween(t *testing.T) {
 		srv.SetTick(id, "2026-10-18", 0)
 		srv.Config.Handler = wrap(srv.Config.Handler, func(path string) {
 			if strings.HasSuffix(path, "/ticks/set") || strings.HasSuffix(path, "/notes/append") {
-				srv.Update(id, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-18" })
+				srv.Update(id, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-18" })
 			}
 		})
 		if r := e.run(false, "", args...); r.code != 1 || !strings.Contains(r.stderr, "is archived") {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/martinhammer/tickcli/internal/fakeserver"
+	"github.com/martinhammer/tickcli/tickbuddy/tickbuddytest"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 )
 
 // lastBody decodes the body of the last request to a path ending in suffix.
-func lastBody(t *testing.T, s *fakeserver.Server, suffix string) map[string]any {
+func lastBody(t *testing.T, s *tickbuddytest.Server, suffix string) map[string]any {
 	t.Helper()
 	bodies := s.LoggedBodies(suffix)
 	if len(bodies) == 0 {
@@ -101,12 +101,12 @@ func TestAppendNote(t *testing.T) {
 		t.Fatalf("SetYesNo append again = %+v %v", r, err)
 	}
 
-	s.Update(ex, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-01" })
+	s.Update(ex, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
 	if got, err := c.AppendNote(ctx, ex, day, "d", false); err != nil || NoteContains(got, "d") {
 		t.Errorf("archived AppendNote = %q, %v", got, err)
 	}
 	cof := s.AddTrack("Coffee", "counter")
-	s.Update(cof, func(t *fakeserver.Track) { t.ArchivedAt = "2026-10-01" })
+	s.Update(cof, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
 	if r, err := c.Add(ctx, cof, day, 1, AppendNote("d")); err != nil || !r.Archived {
 		t.Errorf("archived Add with append = %+v %v", r, err)
 	}

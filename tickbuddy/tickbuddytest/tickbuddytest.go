@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Package fakeserver is an in-memory Tickbuddy OCS API for tests. It
-// follows the server's rules where tests rely on them: sparse ticks, the
-// quiet 200 on archived tracks, notes outliving ticks, and feature flags
-// switching endpoints off as an older server would.
-package fakeserver
+// Package tickbuddytest is an in-memory Tickbuddy server for testing
+// Tickbuddy Go clients, named after net/http/httptest. It serves the OCS
+// API, Nextcloud Login Flow v2 and app password revocation, and follows the
+// server's rules where tests rely on them: sparse ticks, the quiet 200 on
+// archived tracks, notes outliving ticks, and feature flags switching
+// endpoints off as an older server would.
+//
+// It is shared so that tickcli and TickLLMe test their sign-in against the
+// same fake.
+package tickbuddytest
 
 import (
 	"bytes"
