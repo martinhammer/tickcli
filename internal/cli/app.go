@@ -288,7 +288,7 @@ refused, 4 track not found or ambiguous, 5 server or network unreachable.`,
 	root.AddCommand(
 		a.loginCmd(), a.logoutCmd(), a.statusCmd(),
 		a.tickCmd(true), a.tickCmd(false), a.setCmd(), a.addCmd(),
-		a.noteCmd(), a.notesCmd(),
+		a.noteCmd(), a.notesCmd(), a.ticksCmd(),
 		a.weekCmd(), a.statsCmd(), a.tracksCmd(), a.exportCmd(),
 	)
 	return root

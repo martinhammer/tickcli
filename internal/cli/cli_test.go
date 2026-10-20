@@ -143,6 +143,9 @@ func TestGolden(t *testing.T) {
 		"stats-all-year":  {"stats", "--year", "2025"},
 		"tracks":          {"tracks", "--archived", "--private"},
 		"notes":           {"notes"},
+		"ticks-one":       {"ticks", "Exercise", "--from", "2026-10-14", "--to", "2026-10-16"},
+		"ticks-counter":   {"ticks", "cups of coffee", "-d", "-2"},
+		"ticks-all":       {"ticks", "--from", "-1", "--private"},
 		"status":          {"status"},
 	}
 	for name, args := range cmds {
@@ -631,5 +634,163 @@ func TestStatsPeriod(t *testing.T) {
 	r := e.run(true, "", "stats", "Exercise", "--year", "2025")
 	if !strings.Contains(r.stdout, "  At the end        3-day streak (to 18 Oct)\n") {
 		t.Errorf("up to the day before the end:\n%s", r.stdout)
+	}
+}
+
+// TestTodayArchived: the today view adds archived tracks with --archived
+// (D24), and leaves them out without it.
+func TestTodayArchived(t *testing.T) {
+	e := newEnv(t).seed()
+	e.srv.SetTick(e.ids["old"], "2026-10-18", 1)
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"--archived"}, true},
+		{[]string{"--json"}, false},
+		{[]string{"--json", "--archived"}, true},
+	} {
+		for _, tty := range []bool{true, false} {
+			r := e.run(tty, "", tc.args...)
+			if r.code != 0 || strings.Contains(r.stdout, "Old habit") != tc.want {
+				t.Errorf("%v (tty %v): Old habit shown %v, want %v\n%s", tc.args, tty, !tc.want, tc.want, r.stdout)
+			}
+		}
+	}
+	if r := e.run(false, "", "--archived"); !strings.Contains(r.stdout, "2026-10-18\tOld habit\tyes\n") {
+		t.Errorf("archived track's value:\n%s", r.stdout)
+	}
+}
+
+func TestTicksRange(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		from, to string
+	}{
+		{"today", nil, "2026-10-18", "2026-10-18"},
+		{"yesterday", []string{"-d", "yesterday"}, "2026-10-17", "2026-10-17"},
+		{"days ago", []string{"-d", "-3"}, "2026-10-15", "2026-10-15"},
+		{"from alone", []string{"--from", "-6"}, "2026-10-12", "2026-10-18"},
+		{"from and to", []string{"--from", "2026-10-01", "--to", "2026-10-05"}, "2026-10-01", "2026-10-05"},
+		{"future to", []string{"--from", "today", "--to", "2026-10-20"}, "2026-10-18", "2026-10-20"},
+		{"year", []string{"--year", "2025"}, "2025-01-01", "2025-12-31"},
+		{"current year", []string{"--year", "2026"}, "2026-01-01", "2026-10-18"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t).seed()
+			r := e.run(false, "", append([]string{"ticks", "Exercise", "--json"}, tc.args...)...)
+			if r.code != 0 {
+				t.Fatalf("exit %d: %s", r.code, r.stderr)
+			}
+			var got struct {
+				From, To string
+				Tracks   []struct{ Days []struct{ Date string } }
+			}
+			if err := json.Unmarshal([]byte(r.stdout), &got); err != nil {
+				t.Fatal(err)
+			}
+			days := got.Tracks[0].Days
+			if got.From != tc.from || got.To != tc.to || days[0].Date != tc.from || days[len(days)-1].Date != tc.to {
+				t.Errorf("from %s to %s, days %s to %s; want %s to %s", got.From, got.To, days[0].Date, days[len(days)-1].Date, tc.from, tc.to)
+			}
+			if n := e.srv.Count("GET /ocs/v2.php/apps/tickbuddy/api/ticks"); n != 1 {
+				t.Errorf("%d ticks requests", n)
+			}
+		})
+	}
+
+	bad := []struct {
+		name   string
+		args   []string
+		stderr string
+	}{
+		{"to alone", []string{"--to", "today"}, "--to needs --from"},
+		{"from after to", []string{"--from", "today", "--to", "yesterday"}, "--from must be on or before --to"},
+		{"from in the future", []string{"--from", "2026-10-19"}, "--from must be on or before --to"},
+		{"date and from", []string{"-d", "today", "--from", "-1"}, "use -d, --from/--to or --year, not more than one"},
+		{"date and to", []string{"-d", "today", "--to", "today"}, "use -d, --from/--to or --year, not more than one"},
+		{"date and year", []string{"-d", "today", "--year", "2025"}, "use -d, --from/--to or --year, not more than one"},
+		{"year and from", []string{"--year", "2025", "--from", "-1"}, "use -d, --from/--to or --year, not more than one"},
+		{"year and to", []string{"--year", "2025", "--to", "today"}, "use -d, --from/--to or --year, not more than one"},
+		{"bad date", []string{"-d", "2026-02-30"}, "not a date"},
+		{"bad from", []string{"--from", "soon"}, "not a date"},
+		{"bad year", []string{"--year", "25"}, "--year"},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t).seed()
+			r := e.run(false, "", append([]string{"ticks", "Exercise"}, tc.args...)...)
+			if r.code != 2 || !strings.Contains(r.stderr, tc.stderr) {
+				t.Errorf("exit %d, stderr %q; want 2 with %q", r.code, r.stderr, tc.stderr)
+			}
+			if n := len(e.srv.Logged()); n != 0 {
+				t.Errorf("sent %d requests", n)
+			}
+		})
+	}
+}
+
+func TestTicks(t *testing.T) {
+	e := newEnv(t).seed()
+	e.srv.SetNote(e.ids["coffee"], "2026-10-16", "After lunch:\ttwo\nespressos")
+	plainCases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"ticks", "Nightly backup"}, "2026-10-18\tNightly backup\tyes\tFinished 02:14, 3.2 GB\n"},
+		{[]string{"ticks", "Cups of coffee", "--from", "2026-10-14", "--to", "2026-10-16"},
+			"2026-10-14\tCups of coffee\t12\n2026-10-15\tCups of coffee\t0\n2026-10-16\tCups of coffee\t4\tAfter lunch: two espressos\n"},
+		{[]string{"ticks", "Exercise", "--from", "-4", "--to", "-3"}, "2026-10-14\tExercise\tyes\n2026-10-15\tExercise\tno\n"},
+		{[]string{"ticks", "#5", "-d", "-1"}, "2026-10-17\tDiary\tno\n"},
+		{[]string{"ticks", "old habit"}, "2026-10-18\tOld habit\tno\n"},
+		{[]string{"ticks", "-d", "-1", "--archived"}, "2026-10-17\tExercise\tyes\n2026-10-17\tMade someone smile\tno\n2026-10-17\tCups of coffee\t2\n2026-10-17\tNightly backup\tno\n2026-10-17\tOld habit\tno\n"},
+	}
+	for _, tc := range plainCases {
+		if r := e.run(false, "", tc.args...); r.code != 0 || r.stdout != tc.want {
+			t.Errorf("%v: exit %d %s\n--- got\n%s--- want\n%s", tc.args, r.code, r.stderr, r.stdout, tc.want)
+		}
+	}
+
+	// Without a track, the same as tickcli for each day.
+	for _, args := range [][]string{nil, {"-d", "yesterday"}, {"--private"}, {"-d", "-2", "--private"}, {"--archived"}, {"-d", "-1", "--archived", "--private"}} {
+		for _, tty := range []bool{true, false} {
+			want := e.run(tty, "", args...)
+			got := e.run(tty, "", append([]string{"ticks"}, args...)...)
+			if got != want {
+				t.Errorf("ticks %v (tty %v):\n%s\nwant\n%s", args, tty, got.stdout, want.stdout)
+			}
+		}
+	}
+
+	for _, tc := range []struct {
+		args []string
+		code int
+	}{
+		{[]string{"ticks", "Walk"}, 4},
+		{[]string{"ticks", "Exer"}, 4},
+	} {
+		if r := e.run(false, "", tc.args...); r.code != tc.code || r.stdout != "" {
+			t.Errorf("%v: %+v", tc.args, r)
+		}
+	}
+	e.srv.AddTrack("Exercises", "boolean")
+	if r := e.run(true, "", "ticks", "exer"); r.code != 4 {
+		t.Errorf("ambiguous: %+v", r)
+	}
+
+	// A server without notes: no notes request, no notes.
+	e = newEnv(t).seed()
+	e.srv.Features["notes"] = false
+	for _, args := range [][]string{{"ticks", "Nightly backup", "--json"}, {"ticks", "--from", "-3"}} {
+		r := e.run(false, "", args...)
+		if r.code != 0 || strings.Contains(r.stdout, "Finished") || strings.Contains(r.stdout, `"note"`) {
+			t.Errorf("%v without notes: %+v", args, r)
+		}
+	}
+	if n := e.srv.Count("GET /ocs/v2.php/apps/tickbuddy/api/notes"); n != 0 {
+		t.Errorf("%d notes requests", n)
 	}
 }

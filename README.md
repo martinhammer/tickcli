@@ -36,8 +36,18 @@ Nightly backup automation via cron
 30 2 * * * restic backup /srv && tickcli tick "Nightly backup" --note "$(date +%H:%M)"
 ```
 
+Reading values in a script
 
-## Installing tickcli
+```
+$ tickcli ticks "Nightly backup" -d yesterday | cut -f3
+yes
+
+$ tickcli ticks Exercise --year 2025 --json | jq '[.tracks[].days[] | select(.value)] | length'
+212
+```
+
+
+## Installing Tickcli
 
 Option 1: Download the binary for your system from the [releases page](https://github.com/martinhammer/tickcli/releases), make it executable and put it on your `PATH`. 
 
@@ -106,7 +116,7 @@ The `login` command uses the keychain when it can and reports where it stored th
 
 ## Using tickcli
 
-Tracks are named by their exact name (ignoring case) or by id retrieved through `tickcli tracks`.
+Tracks are named by their exact name (ignoring case) or by #id retrieved through `tickcli tracks`.
 
 Today is the default date for most commands; use `-d` to specify another day. Dates are `YYYY-MM-DD`, `today`, `yesterday` or `-N` for N days ago. "Today" means the machine's local date, not the server's.
 
@@ -117,8 +127,9 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 | `tickcli login <url> [--paste] [--qr] [--insecure-http]` | Sign in; see above. |
 | `tickcli logout [--local]` | Forget the credentials and revoke the app password; see above. |
 | `tickcli status` | Who is signed in and where the credentials are. |
-| `tickcli [-d date] [--private]` | Today's tracks with values and notes; `-d` for another day, `--private` to include private tracks. |
+| `tickcli [-d date] [--private] [--archived]` | Today's tracks with values and notes; `-d` for another day, `--private` and `--archived` to include private and archived tracks. |
 | `tickcli tracks [--archived] [--private]` | Tracks with their ids; `--archived` and `--private` add those. |
+| `tickcli ticks [track] [-d date \| --from date [--to date] \| --year YYYY] [--private] [--archived]` | A track's value on a day (default today) or on every day of a range. Without a track, the same as `tickcli` for each day. |
 | `tickcli week [--private]` | The last 7 days of each track, today first, with the current streak or break. |
 | `tickcli notes [--from date] [--to date] [--private] [--archived]` | Notes of the last 7 days, or the range. |
 | `tickcli stats [track] [--from date] [--to date] [--year YYYY] [--private] [--archived]` | Totals, weekly mean, last two weeks, current run, longest streak and break, for all time or a period: `--from`/`--to` (either alone) or `--year`, not both. |
@@ -138,6 +149,7 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 - When appending to notes, duplicate lines are ignored so that running the same command again changes
 nothing; `--force-duplicate` appends it anyway
 - `stats --year 2025`, then `stats --year 2026`, compares a track year on year; `--from` and `--to` give any other period (`--from -30` is the last 30 days and today). Given any period, "Last 7 days" and "Previous 7" refer to its last two weeks, and a period that ended before today shows its run as of the last day, labelled "At the end".
+- `ticks` piped prints the today view's lines, one per track per day, oldest day first: date, track, `yes`/`no` or the count, and the note if any. With `--json` it is `{"from", "to", "tracks": [{"track", "trackId", "type", "days": [{"date", "value", "note"}]}]}`, every day listed (`note` only when there is one), even for a single day.
 
 ### Retry
 - Requests that are safe to repeat are retried up to 3 times (after 1, 2 and 4 seconds) when the server can't be reached. This can be controlled via `--retries n`. 

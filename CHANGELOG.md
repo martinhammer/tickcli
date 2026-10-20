@@ -8,8 +8,9 @@ First release.
   with `--note` to stamp the day's note in the same request, or
   `--append-note` to add a line to it.
 - `note` and `notes` set, append to, delete and list notes.
-- `week`, `stats`, `tracks` and `export` read; `stats` also for a period
-  with `--from`/`--to` or `--year`.
+- `week`, `stats`, `tracks`, `ticks` and `export` read; `stats` also for
+  a period with `--from`/`--to` or `--year`, `ticks` for a day or every day
+  of such a period.
 - `login` (Nextcloud Login Flow v2, with `--qr`, or `--paste`), `logout`
   (revokes an app password Tickcli created) and `status`.
 - Credentials from the `TICKBUDDY_*` environment variables, the system
