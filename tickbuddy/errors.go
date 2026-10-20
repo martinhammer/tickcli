@@ -14,7 +14,8 @@ import (
 var (
 	// ErrUnauthorized: the server answered 401, so the credentials were refused.
 	ErrUnauthorized = errors.New("the server refused the credentials")
-	// ErrTrackNotFound: the server answered 404, or no track matched locally.
+	// ErrTrackNotFound: Tickbuddy answered 404 with a reason or message, or
+	// no track matched locally.
 	ErrTrackNotFound = errors.New("track not found")
 	// ErrAmbiguous: a name matched several tracks.
 	ErrAmbiguous = errors.New("several tracks match")
@@ -27,7 +28,9 @@ var (
 	ErrReadOnly = errors.New("the track is read-only")
 	// ErrUnreachable: DNS, connect, TLS, timeouts and any 5xx.
 	ErrUnreachable = errors.New("can't reach the server")
-	// ErrNotInstalled: the server has no tickbuddy capability.
+	// ErrNotInstalled: the server has no tickbuddy capability, or answered
+	// Tickbuddy's API with Nextcloud's own 404 (empty data), as while the app
+	// is disabled.
 	//lint:ignore ST1005 Tickbuddy is a name
 	ErrNotInstalled = errors.New("Tickbuddy isn't installed or enabled on this Nextcloud")
 	// ErrUnsupportedServer: the server's apiVersion isn't one this package speaks.

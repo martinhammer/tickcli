@@ -87,6 +87,11 @@ func TestErrorMapping(t *testing.T) {
 	}{
 		{401, `{"ocs":{"meta":{},"data":[]}}`, ErrUnauthorized, ""},
 		{404, `{"ocs":{"meta":{},"data":{"message":"Track not found"}}}`, ErrTrackNotFound, "Track not found"},
+		{404, `{"ocs":{"meta":{"message":"gone"},"data":{"reason":"trackNotFound"}}}`, ErrTrackNotFound, "gone"},
+		{404, `{"ocs":{"meta":{"statuscode":998,"message":"Invalid query, please check the syntax."},"data":[]}}`, ErrNotInstalled, ErrNotInstalled.Error()},
+		{404, `{"ocs":{"meta":{},"data":{}}}`, ErrNotInstalled, ErrNotInstalled.Error()},
+		{404, `{"ocs":{"meta":{},"data":{"message":""}}}`, ErrNotInstalled, ErrNotInstalled.Error()},
+		{404, ``, ErrNotInstalled, ErrNotInstalled.Error()},
 		{400, `{"ocs":{"meta":{},"data":{"message":"Notes can be at most 200 characters"}}}`, ErrBadRequest, "Notes can be at most 200 characters"},
 		{403, `{"ocs":{"meta":{"message":"limit"},"data":[]}}`, ErrBadRequest, "limit"},
 		{500, `oops`, ErrUnreachable, ""},
@@ -440,5 +445,51 @@ func TestStatsPeriod(t *testing.T) {
 	}
 	if len(s.StatsQueries) != before {
 		t.Error("sent a stats request without the flag")
+	}
+}
+
+// TestNotFoundKinds: Tickbuddy's 404, with a reason or only a message, is
+// ErrTrackNotFound; Nextcloud's own 404 with empty data, as while the app is
+// disabled, is ErrNotInstalled. Every call to the API reads them alike.
+func TestNotFoundKinds(t *testing.T) {
+	for _, kind := range []string{"reason", "message", "disabled"} {
+		t.Run(kind, func(t *testing.T) {
+			s, c, waits := setup(t)
+			ctx := context.Background()
+			if _, err := c.Capabilities(ctx); err != nil {
+				t.Fatal(err)
+			}
+			want, msg := ErrTrackNotFound, "Track not found"
+			switch kind {
+			case "reason":
+				s.NotFoundReason = "trackNotFound"
+			case "disabled":
+				s.Disabled = true
+				want, msg = ErrNotInstalled, ErrNotInstalled.Error()
+			}
+			calls := map[string]func() error{
+				"SetYesNo":   func() error { _, err := c.SetYesNo(ctx, 99, day, true, nil); return err },
+				"SetCount":   func() error { _, err := c.SetCount(ctx, 99, day, 1, nil); return err },
+				"Add":        func() error { _, err := c.Add(ctx, 99, day, 1, nil); return err },
+				"SetNote":    func() error { _, err := c.SetNote(ctx, 99, day, "x"); return err },
+				"AppendNote": func() error { _, err := c.AppendNote(ctx, 99, day, "x", false); return err },
+				"DeleteNote": func() error { return c.DeleteNote(ctx, 99, day) },
+				"Stats":      func() error { _, err := c.Stats(ctx, day, 99, false, false); return err },
+				"Rename":     func() error { _, err := c.RenameTrack(ctx, 99, "x"); return err },
+			}
+			if kind == "disabled" {
+				calls["Tracks"] = func() error { _, err := c.Tracks(ctx, true); return err }
+				calls["Ticks"] = func() error { _, err := c.Ticks(ctx, day, day); return err }
+			}
+			for name, call := range calls {
+				err := call()
+				if !errors.Is(err, want) || err.Error() != msg {
+					t.Errorf("%s: %v, want %v", name, err, want)
+				}
+			}
+			if len(*waits) != 0 {
+				t.Errorf("retried: %v", *waits)
+			}
+		})
 	}
 }

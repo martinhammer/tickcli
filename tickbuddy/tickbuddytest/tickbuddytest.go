@@ -59,11 +59,20 @@ type Server struct {
 	Password string
 	Version  string
 	// Features maps flags to whether they are advertised; a flag that is off
-	// also switches its endpoint off (404), as on an older server.
+	// also switches its endpoint off (Nextcloud's own 404), as on an older server.
 	Features map[string]bool
 	// NoTickbuddy drops the tickbuddy capability, as without the app.
 	NoTickbuddy bool
-	APIVersion  int
+	// Disabled answers every Tickbuddy API address with Nextcloud's own 404
+	// (empty data, "Invalid query…"), as while the app is disabled. The
+	// capability stays unless NoTickbuddy is set too, as for a client that
+	// read it before.
+	Disabled bool
+	// NotFoundReason goes with the "Track not found" 404 as data.reason, as
+	// the planned server sends ("trackNotFound"). Today's server sends the
+	// message only.
+	NotFoundReason string
+	APIVersion     int
 
 	Tracks []Track
 	Ticks  map[key]int
@@ -245,6 +254,23 @@ func msg(w http.ResponseWriter, status int, m string) {
 	ocs(w, status, map[string]string{"message": m})
 }
 
+// invalidQuery is Nextcloud's 404 for an OCS address no app serves.
+func invalidQuery(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	meta := map[string]any{"status": "failure", "statuscode": 998, "message": "Invalid query, please check the syntax. API specifications are here: http://www.open-collaboration-services.org/."}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ocs": map[string]any{"meta": meta, "data": []any{}}})
+}
+
+// trackNotFound is Tickbuddy's 404 for a missing track.
+func (s *Server) trackNotFound(w http.ResponseWriter) {
+	data := map[string]string{"message": "Track not found"}
+	if s.NotFoundReason != "" {
+		data["reason"] = s.NotFoundReason
+	}
+	ocs(w, http.StatusNotFound, data)
+}
+
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
@@ -301,6 +327,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/ocs/v2.php/core/apppassword" && r.Method == http.MethodDelete:
 		s.Revoked = true
 		ocs(w, http.StatusOK, []any{})
+	case strings.HasPrefix(path, "/ocs/v2.php/apps/tickbuddy/api/") && s.Disabled:
+		invalidQuery(w)
 	case strings.HasPrefix(path, "/ocs/v2.php/apps/tickbuddy/api/"):
 		s.api(w, r, strings.TrimPrefix(path, "/ocs/v2.php/apps/tickbuddy/api"))
 	default:
@@ -398,7 +426,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		id, _ := strconv.Atoi(strings.TrimPrefix(path, "/tracks/"))
 		t := s.track(id)
 		if t == nil {
-			msg(w, http.StatusNotFound, "Track not found")
+			s.trackNotFound(w)
 			return
 		}
 		if locked(w, t, strict) {
@@ -503,7 +531,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 
 	case path == "/ticks/increment":
 		if !feat["counterIncrement"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		t, ok := s.writeChecks(w, b, strict, "counter")
@@ -533,7 +561,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 
 	case path == "/stats":
 		if !feat["stats"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		s.StatsQueries = append(s.StatsQueries, q)
@@ -566,14 +594,14 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			out = append(out, st)
 		}
 		if id != 0 && len(out) == 0 {
-			msg(w, http.StatusNotFound, "Track not found")
+			s.trackNotFound(w)
 			return
 		}
 		ocs(w, http.StatusOK, out)
 
 	case path == "/notes" && r.Method == http.MethodGet:
 		if !feat["notes"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		from, to := q.Get("from"), q.Get("to")
@@ -602,7 +630,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 
 	case path == "/notes/set":
 		if !feat["notes"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		t, ok := s.writeChecks(w, b, strict, "")
@@ -626,7 +654,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 
 	case path == "/notes/append":
 		if !feat["notesAppend"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		t, ok := s.writeChecks(w, b, strict, "")
@@ -654,13 +682,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 
 	case path == "/notes" && r.Method == http.MethodDelete:
 		if !feat["notes"] {
-			w.WriteHeader(http.StatusNotFound)
+			invalidQuery(w)
 			return
 		}
 		id, _ := strconv.Atoi(q.Get("trackId"))
 		t := s.track(id)
 		if t == nil {
-			msg(w, http.StatusNotFound, "Track not found")
+			s.trackNotFound(w)
 			return
 		}
 		if locked(w, t, strict) {
@@ -682,7 +710,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		ocs(w, http.StatusOK, map[string]any{"version": 1, "exportedAt": "2026-10-18T10:00:00+00:00", "tracks": tracks, "ticks": []any{}})
 
 	default:
-		w.WriteHeader(http.StatusNotFound)
+		invalidQuery(w)
 	}
 }
 
@@ -698,7 +726,7 @@ func deref(p *string) string {
 func (s *Server) writeChecks(w http.ResponseWriter, b body, strict bool, typ string) (*Track, bool) {
 	t := s.track(b.TrackID)
 	if t == nil {
-		msg(w, http.StatusNotFound, "Track not found")
+		s.trackNotFound(w)
 		return nil, false
 	}
 	if typ != "" && t.Type != typ {

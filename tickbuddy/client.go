@@ -219,6 +219,10 @@ func (c *Client) once(ctx context.Context, method, u string, api bool, user, pas
 	case resp.StatusCode == http.StatusUnauthorized:
 		e.Kind = ErrUnauthorized
 		e.Message = ""
+	case resp.StatusCode == http.StatusNotFound && api && !trackNotFound(env):
+		// Nextcloud's own 404 for an app that is disabled or missing.
+		e.Kind = ErrNotInstalled
+		e.Message = ""
 	case resp.StatusCode == http.StatusNotFound:
 		e.Kind = ErrTrackNotFound
 	case resp.StatusCode >= 500:
@@ -239,6 +243,17 @@ func (c *Client) once(ctx context.Context, method, u string, api bool, user, pas
 func isConflict(err error) bool {
 	var e *Error
 	return errors.As(err, &e) && e.Status == http.StatusConflict
+}
+
+// trackNotFound reports whether a 404 is Tickbuddy's own: its data carries
+// a reason or a message. Nextcloud answers 404 with empty data for every
+// address of a disabled app.
+func trackNotFound(env envelope) bool {
+	var d struct {
+		Reason  string `json:"reason"`
+		Message string `json:"message"`
+	}
+	return len(env.OCS.Data) > 0 && json.Unmarshal(env.OCS.Data, &d) == nil && (d.Reason != "" || d.Message != "")
 }
 
 func serverMessage(env envelope) string {
