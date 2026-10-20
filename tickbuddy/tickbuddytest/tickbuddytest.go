@@ -5,7 +5,8 @@
 // API, Nextcloud Login Flow v2 and app password revocation, and follows the
 // server's rules where tests rely on them: sparse ticks, the quiet 200 on
 // archived tracks, notes outliving ticks, and feature flags switching
-// endpoints off as an older server would.
+// endpoints off as an older server would. Track.ReadOnly gives the planned
+// server's 423 instead.
 //
 // It is shared so that tickcli and TickLLMe test their sign-in against the
 // same fake.
@@ -33,7 +34,16 @@ type Track struct {
 	Type       string // "boolean" or "counter"
 	Private    bool
 	ArchivedAt string
+	// ReadOnly makes every write to the track answer 423 Locked with this
+	// reason ("archived", "immutable", …) to a client that sends Prefer:
+	// handling=strict, as the planned server does; other clients get the
+	// quiet 200 with nothing saved. "archived" without ArchivedAt is a track
+	// archived after the client listed it.
+	ReadOnly string
 }
+
+// writable reports whether writes to the track are saved.
+func (t *Track) writable() bool { return t.ArchivedAt == "" && t.ReadOnly == "" }
 
 type key struct {
 	track int
@@ -76,10 +86,11 @@ type Server struct {
 	// when other writers kept changing the note.
 	ConflictNext int
 
-	// Requests logs "METHOD path" for every request, and Bodies each
-	// request's body ("" without one).
+	// Requests logs "METHOD path" for every request, Bodies each request's
+	// body ("" without one), and Prefers its Prefer header.
 	Requests []string
 	Bodies   []string
+	Prefers  []string
 
 	// Login flow: LoginPolls 404s before the flow answers.
 	LoginPolls       int
@@ -184,6 +195,14 @@ func (s *Server) Logged() []string {
 	return slices.Clone(s.Requests)
 }
 
+// LoggedPrefers returns the Prefer header of every logged request ("" when
+// not sent), in the order of Logged.
+func (s *Server) LoggedPrefers() []string {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	return slices.Clone(s.Prefers)
+}
+
 // LoggedBodies returns the bodies of the logged requests to paths ending in
 // suffix, in order.
 func (s *Server) LoggedBodies(suffix string) []string {
@@ -236,6 +255,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		r.Body = io.NopCloser(bytes.NewReader(raw))
 	}
 	s.Bodies = append(s.Bodies, string(raw))
+	s.Prefers = append(s.Prefers, r.Header.Get("Prefer"))
 
 	switch r.URL.Path {
 	case "/index.php/login/v2":
@@ -347,6 +367,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 	q := r.URL.Query()
 	feat := s.Features
 	isWrite := r.Method != http.MethodGet
+	strict := strictHandling(r)
 
 	answer := func(status int, data any) {
 		if isWrite && s.ApplyThenFail > 0 {
@@ -380,7 +401,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			msg(w, http.StatusNotFound, "Track not found")
 			return
 		}
-		if b.Name != nil {
+		if locked(w, t, strict) {
+			return
+		}
+		if b.Name != nil && t.ReadOnly == "" {
 			t.Name = *b.Name
 		}
 		answer(http.StatusOK, trackJSON(*t, 0))
@@ -398,7 +422,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		ocs(w, http.StatusOK, out)
 
 	case path == "/ticks/toggle":
-		t, ok := s.writeChecks(w, b, "boolean")
+		t, ok := s.writeChecks(w, b, strict, "boolean")
 		if !ok {
 			return
 		}
@@ -406,7 +430,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		if !s.noteAllowed(w, b, k) {
 			return
 		}
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			if s.Ticks[k] > 0 {
 				delete(s.Ticks, k)
 			} else {
@@ -426,7 +450,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 				return
 			}
 		}
-		t, ok := s.writeChecks(w, b, "")
+		t, ok := s.writeChecks(w, b, strict, "")
 		if !ok {
 			return
 		}
@@ -442,7 +466,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			if !s.noteAllowed(w, b, k) {
 				return
 			}
-			if t.ArchivedAt == "" {
+			if t.writable() {
 				if want {
 					s.Ticks[k] = 1
 				} else {
@@ -464,7 +488,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		if !s.noteAllowed(w, b, k) {
 			return
 		}
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			if n == 0 {
 				delete(s.Ticks, k)
 			} else {
@@ -482,7 +506,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		t, ok := s.writeChecks(w, b, "counter")
+		t, ok := s.writeChecks(w, b, strict, "counter")
 		if !ok {
 			return
 		}
@@ -494,7 +518,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		if !s.noteAllowed(w, b, k) {
 			return
 		}
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			if v := s.Ticks[k] + b.Delta; v > 0 {
 				s.Ticks[k] = v
 			} else {
@@ -581,7 +605,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		t, ok := s.writeChecks(w, b, "")
+		t, ok := s.writeChecks(w, b, strict, "")
 		if !ok {
 			return
 		}
@@ -591,7 +615,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			return
 		}
 		k := key{t.ID, b.Date}
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			if text == "" {
 				delete(s.Notes, k)
 			} else {
@@ -605,13 +629,13 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		t, ok := s.writeChecks(w, b, "")
+		t, ok := s.writeChecks(w, b, strict, "")
 		if !ok {
 			return
 		}
 		k := key{t.ID, b.Date}
 		text := normalise(deref(b.Text))
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			next, err := appended(s.Notes[k], text, b.AllowDuplicate)
 			if err != "" {
 				msg(w, http.StatusBadRequest, err)
@@ -639,7 +663,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 			msg(w, http.StatusNotFound, "Track not found")
 			return
 		}
-		if t.ArchivedAt == "" {
+		if locked(w, t, strict) {
+			return
+		}
+		if t.writable() {
 			delete(s.Notes, key{id, q.Get("date")})
 		}
 		answer(http.StatusNoContent, nil)
@@ -667,8 +694,8 @@ func deref(p *string) string {
 }
 
 // writeChecks runs the server's checks in its order: track (404), type
-// (400), date (400).
-func (s *Server) writeChecks(w http.ResponseWriter, b body, typ string) (*Track, bool) {
+// (400), date (400), read-only (423).
+func (s *Server) writeChecks(w http.ResponseWriter, b body, strict bool, typ string) (*Track, bool) {
 	t := s.track(b.TrackID)
 	if t == nil {
 		msg(w, http.StatusNotFound, "Track not found")
@@ -682,7 +709,34 @@ func (s *Server) writeChecks(w http.ResponseWriter, b body, typ string) (*Track,
 		msg(w, http.StatusBadRequest, "Date must be a real date as YYYY-MM-DD")
 		return nil, false
 	}
+	if locked(w, t, strict) {
+		return nil, false
+	}
 	return t, true
+}
+
+// strictHandling reports whether the request asks for Prefer:
+// handling=strict (RFC 7240).
+func strictHandling(r *http.Request) bool {
+	for _, v := range r.Header.Values("Prefer") {
+		for _, p := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(p), "handling=strict") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// locked answers 423 for a read-only track when the client asked for strict
+// handling, and reports whether it did.
+func locked(w http.ResponseWriter, t *Track, strict bool) bool {
+	if t.ReadOnly == "" || !strict {
+		return false
+	}
+	m := fmt.Sprintf("%s is %s, so nothing was changed", t.Name, t.ReadOnly)
+	ocs(w, http.StatusLocked, map[string]string{"message": m, "reason": t.ReadOnly})
+	return true
 }
 
 // maxNote is the longest note the server stores.
@@ -758,7 +812,7 @@ func (s *Server) writeNote(w http.ResponseWriter, t *Track, k key, b body, out m
 		return true
 	}
 	if b.AppendNote != nil && s.Features["notesAppend"] {
-		if t.ArchivedAt == "" {
+		if t.writable() {
 			if s.ConflictNext > 0 {
 				s.ConflictNext--
 				msg(w, http.StatusConflict, "The note changed while appending; try again")
@@ -774,7 +828,7 @@ func (s *Server) writeNote(w http.ResponseWriter, t *Track, k key, b body, out m
 	if b.Note == nil {
 		return true
 	}
-	if t.ArchivedAt == "" {
+	if t.writable() {
 		if text := normalise(*b.Note); text == "" {
 			delete(s.Notes, k)
 		} else {

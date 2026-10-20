@@ -128,7 +128,7 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 | `tickcli logout [--local]` | Forget the credentials and revoke the app password; see above. |
 | `tickcli status` | Who is signed in and where the credentials are. |
 | `tickcli [-d date] [--private] [--archived]` | Today's tracks with values and notes; `-d` for another day, `--private` and `--archived` to include private and archived tracks. |
-| `tickcli tracks [--archived] [--private]` | Tracks with their ids; `--archived` and `--private` add those. |
+| `tickcli tracks [--private] [--archived]` | Tracks with their ids; `--archived` and `--private` add those. |
 | `tickcli ticks [track] [-d date \| --from date [--to date] \| --year YYYY] [--private] [--archived]` | A track's value on a day (default today) or on every day of a range. Without a track, the same as `tickcli` for each day. |
 | `tickcli week [--private]` | The last 7 days of each track, today first, with the current streak or break. |
 | `tickcli notes [--from date] [--to date] [--private] [--archived]` | Notes of the last 7 days, or the range. |
@@ -168,12 +168,24 @@ nothing; `--force-duplicate` appends it anyway
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 1 | error, including an archived track and server version too old for the command |
+| 1 | error, including a server version too old for the command |
 | 2 | bad usage: unknown command or flag, wrong arguments, a bad date, the wrong command for the track type |
 | 3 | not signed in, or the server refused the credentials |
 | 4 | track not found, or the name matches several tracks |
 | 5 | server or network unreachable |
+| 6 | track is read-only (archived), so nothing was changed |
 
+Telling failures apart in a script using the exit code:
+
+```
+tickcli tick "Nightly backup" --note "$(date +%H:%M)"
+case $? in
+  0) ;;
+  5) echo "Tickbuddy unreachable; try again later" >&2 ;;
+  6) echo "Nightly backup track is read-only; nothing was recorded" >&2 ;;
+  *) echo "tickcli failed" >&2 ;;
+esac
+```
 
 ## Supported platforms
 

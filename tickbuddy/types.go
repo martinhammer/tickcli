@@ -153,6 +153,8 @@ type Result struct {
 	// Archived is set when the server answered with a different state than
 	// the one sent, which it does only for an archived track (it saves
 	// nothing then and answers 200). The caller decides what that means.
-	// A write that already matched the stored state can't tell.
+	// A write that already matched the stored state can't tell. A server
+	// that honours Prefer: handling=strict fails the write with
+	// ErrReadOnly instead.
 	Archived bool
 }

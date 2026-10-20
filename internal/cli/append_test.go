@@ -140,7 +140,7 @@ func TestAppendArchivedInBetween(t *testing.T) {
 				srv.Update(id, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-18" })
 			}
 		})
-		if r := e.run(false, "", args...); r.code != 1 || !strings.Contains(r.stderr, "is archived") {
+		if r := e.run(false, "", args...); r.code != 6 || !strings.Contains(r.stderr, "is archived") {
 			t.Errorf("%v: %+v", args, r)
 		}
 	}

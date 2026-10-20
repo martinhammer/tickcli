@@ -10,7 +10,7 @@ import (
 
 // The kinds of error this package returns. Test for them with errors.Is; the
 // concrete error usually carries more detail (*Error, *FeatureError,
-// *MatchError).
+// *MatchError, *ReadOnlyError).
 var (
 	// ErrUnauthorized: the server answered 401, so the credentials were refused.
 	ErrUnauthorized = errors.New("the server refused the credentials")
@@ -22,6 +22,9 @@ var (
 	ErrBadRequest = errors.New("the server refused the request")
 	// ErrNeedsNewerServer: a feature flag this call needs is missing.
 	ErrNeedsNewerServer = errors.New("this needs a newer Tickbuddy on the server")
+	// ErrReadOnly: the server answered 423, so the track can't be changed
+	// and nothing was. Today's servers answer 200 instead (see Result.Archived).
+	ErrReadOnly = errors.New("the track is read-only")
 	// ErrUnreachable: DNS, connect, TLS, timeouts and any 5xx.
 	ErrUnreachable = errors.New("can't reach the server")
 	// ErrNotInstalled: the server has no tickbuddy capability.
@@ -65,6 +68,31 @@ func (e *FeatureError) Is(target error) bool { return target == ErrNeedsNewerSer
 
 // NeedsNewerServer returns the error for a missing feature flag.
 func NeedsNewerServer(feature string) error { return &FeatureError{Feature: feature} }
+
+// Reasons a server gives for ErrReadOnly. Others may follow.
+const (
+	ReasonArchived  = "archived"
+	ReasonImmutable = "immutable"
+)
+
+// ReadOnlyError is ErrReadOnly with the server's reason (ReasonArchived,
+// ReasonImmutable, …) and its own message.
+type ReadOnlyError struct {
+	Reason  string
+	Message string
+}
+
+func (e *ReadOnlyError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Reason != "" {
+		return fmt.Sprintf("the track is read-only (%s), so nothing was changed", e.Reason)
+	}
+	return "the track is read-only, so nothing was changed"
+}
+
+func (e *ReadOnlyError) Is(target error) bool { return target == ErrReadOnly }
 
 // MatchError is ErrTrackNotFound or ErrAmbiguous from Resolve. Candidates
 // are the tracks that matched (ambiguous) or look similar (not found).

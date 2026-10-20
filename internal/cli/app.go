@@ -32,6 +32,7 @@ const (
 	exitAuth        = 3
 	exitNotFound    = 4
 	exitUnreachable = 5
+	exitReadOnly    = 6
 )
 
 // App is one run of tickcli. Its fields are the outside world, replaceable
@@ -132,6 +133,8 @@ func exitCode(err error) int {
 		return exitNotFound
 	case errors.Is(err, tickbuddy.ErrUnreachable):
 		return exitUnreachable
+	case errors.Is(err, tickbuddy.ErrReadOnly):
+		return exitReadOnly
 	}
 	return exitError
 }
@@ -262,7 +265,8 @@ func (a *App) rootCmd() *cobra.Command {
 Run without a command, it shows today's tracks.
 
 Exit codes: 0 done, 1 error, 2 bad usage, 3 not signed in or credentials
-refused, 4 track not found or ambiguous, 5 server or network unreachable.`,
+refused, 4 track not found or ambiguous, 5 server or network unreachable,
+6 track is read-only (archived), so nothing was changed.`,
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,

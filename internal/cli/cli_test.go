@@ -266,8 +266,8 @@ func TestExitCodes(t *testing.T) {
 		{"not found", nil, []string{"tick", "Walk"}, 4, `no track called "Walk"`},
 		{"prefix in a script", nil, []string{"tick", "Exer"}, 4, "did you mean Exercise (#1)"},
 		{"unreachable", func(e *env) { e.srv.Close() }, []string{"tracks", "--retries", "0"}, 5, "can't reach"},
-		{"archived", nil, []string{"tick", "Old habit"}, 1, `Track "Old habit" is archived, so nothing was changed`},
-		{"archived note", nil, []string{"note", "Old habit", "x"}, 1, "archived"},
+		{"archived", nil, []string{"tick", "Old habit"}, 6, `Track "Old habit" is archived, so nothing was changed`},
+		{"archived note", nil, []string{"note", "Old habit", "x"}, 6, "archived"},
 		{"no tickbuddy", func(e *env) { e.srv.NoTickbuddy = true }, []string{"tracks"}, 1, "Tickbuddy isn't installed or enabled on this Nextcloud"},
 		{"old server stats", func(e *env) { e.srv.Old() }, []string{"stats"}, 1, "newer Tickbuddy"},
 		{"old server stats period", func(e *env) { e.srv.Old() }, []string{"stats", "--year", "2025"}, 1, "newer Tickbuddy"},
@@ -349,13 +349,13 @@ func TestArchivedInBetween(t *testing.T) {
 		}
 	})
 	r := e.run(false, "", "tick", "Made someone smile")
-	if r.code != 1 || !strings.Contains(r.stderr, "is archived") {
+	if r.code != 6 || !strings.Contains(r.stderr, "is archived") {
 		t.Errorf("tick: %+v", r)
 	}
 	srv.Update(id, func(t *tickbuddytest.Track) { t.ArchivedAt = "" })
 	srv.SetNote(id, "2026-10-18", "kept")
 	r = e.run(false, "", "note", "Made someone smile", "--clear")
-	if r.code != 1 || !strings.Contains(r.stderr, "is archived") {
+	if r.code != 6 || !strings.Contains(r.stderr, "is archived") {
 		t.Errorf("note --clear: %+v", r)
 	}
 }

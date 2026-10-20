@@ -23,14 +23,29 @@ type writeResult struct {
 	Note    *string          `json:"note,omitempty"`
 }
 
-// archivedTrack is the refusal to write to an archived track (decision 3).
+// archivedTrack is the refusal to write to an archived track (decision 3),
+// found before sending, from a 200 that differs from what was sent, or from
+// the server's 423. It is ErrReadOnly, exit 6 (decision 25).
 type archivedTrack struct{ name string }
 
 func (e *archivedTrack) Error() string {
 	return fmt.Sprintf("Track %q is archived, so nothing was changed", e.name)
 }
 
+func (e *archivedTrack) Is(target error) bool { return target == tickbuddy.ErrReadOnly }
+
 func archivedError(t tickbuddy.Track) error { return &archivedTrack{flat(t.Name)} }
+
+// readOnly reads a write's error: the server's 423 for an archived track
+// becomes the same refusal as before sending; a 423 for another reason keeps
+// the server's message.
+func readOnly(t tickbuddy.Track, err error) error {
+	var e *tickbuddy.ReadOnlyError
+	if errors.As(err, &e) && e.Reason == tickbuddy.ReasonArchived {
+		return archivedError(t)
+	}
+	return err
+}
 
 // target reads the day, connects, and finds the track a write goes to. It
 // refuses a write that needs a feature flag the server lacks (needs) before
@@ -151,7 +166,7 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 			}
 			r, err := c.SetYesNo(cmd.Context(), t.ID, day, ticked, note)
 			if err != nil {
-				return err
+				return readOnly(t, err)
 			}
 			if r.Archived {
 				return archivedError(t)
@@ -189,7 +204,7 @@ func (a *App) setCmd() *cobra.Command {
 			}
 			r, err := c.SetCount(cmd.Context(), t.ID, day, n, note)
 			if err != nil {
-				return err
+				return readOnly(t, err)
 			}
 			if r.Archived {
 				return archivedError(t)
@@ -234,7 +249,7 @@ func (a *App) addCmd() *cobra.Command {
 				return fmt.Errorf("%w. The server may or may not have counted this; check with `tickcli` before adding again", err)
 			}
 			if err != nil {
-				return err
+				return readOnly(t, err)
 			}
 			if r.Archived {
 				return archivedError(t)
@@ -324,7 +339,7 @@ func (a *App) noteCmd() *cobra.Command {
 				stored, err = c.SetNote(cmd.Context(), t.ID, day, text)
 			}
 			if err != nil {
-				return err
+				return readOnly(t, err)
 			}
 			if appendFlag && !tickbuddy.NoteContains(stored, text) || !appendFlag && stored != tickbuddy.NormalizeNote(text) {
 				return archivedError(t)

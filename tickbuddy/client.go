@@ -123,7 +123,8 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		}
 	}
 	path := r.path
-	if !strings.HasPrefix(path, "/ocs/") {
+	api := !strings.HasPrefix(path, "/ocs/")
+	if api {
 		path = apiPrefix + path
 	}
 	u := strings.TrimRight(base, "/") + path
@@ -136,7 +137,7 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		attempts += c.retries
 	}
 	for attempt := 0; ; attempt++ {
-		err = c.once(ctx, r.method, u, user, password, body, out)
+		err = c.once(ctx, r.method, u, api, user, password, body, out)
 		if err == nil || attempt+1 >= attempts || !(errors.Is(err, ErrUnreachable) || r.retryConflict && isConflict(err)) || ctx.Err() != nil {
 			return err
 		}
@@ -147,7 +148,10 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 	}
 }
 
-func (c *Client) once(ctx context.Context, method, u, user, password string, body []byte, out any) error {
+// once sends one request. api marks Tickbuddy's own API, which is asked to
+// refuse writes it can't make (Prefer: handling=strict, RFC 7240) and whose
+// 423 is read as ErrReadOnly.
+func (c *Client) once(ctx context.Context, method, u string, api bool, user, password string, body []byte, out any) error {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
@@ -160,6 +164,9 @@ func (c *Client) once(ctx context.Context, method, u, user, password string, bod
 	req.Header.Set("OCS-APIRequest", "true")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
+	if api {
+		req.Header.Set("Prefer", "handling=strict")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -200,6 +207,13 @@ func (c *Client) once(ctx context.Context, method, u, user, password string, bod
 	}
 
 	msg := serverMessage(env)
+	if api && resp.StatusCode == http.StatusLocked {
+		var d struct {
+			Reason string `json:"reason"`
+		}
+		_ = json.Unmarshal(env.OCS.Data, &d)
+		return &ReadOnlyError{Reason: d.Reason, Message: msg}
+	}
 	e := &Error{Status: resp.StatusCode, Message: msg}
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:

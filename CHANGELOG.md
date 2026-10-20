@@ -15,5 +15,5 @@ First release.
   (revokes an app password Tickcli created) and `status`.
 - Credentials from the `TICKBUDDY_*` environment variables, the system
   keychain, or a file encrypted with `systemd-creds` or a machine-id key.
-- Pretty, plain (piped) and `--json` output; fixed exit codes 0 to 5.
+- Pretty, plain (piped) and `--json` output; fixed exit codes 0 to 6.
 - The Go package `tickbuddy`, shared with TickLLMe.

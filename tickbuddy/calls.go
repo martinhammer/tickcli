@@ -211,7 +211,8 @@ func (c *Client) setCount(ctx context.Context, trackID int, date Date, n int, no
 // flag it reads the day and sets the sum.
 //
 // Result.Archived can only be told from the note, since the server answers
-// an archived track with its unchanged count.
+// an archived track with its unchanged count (a newer server fails with
+// ErrReadOnly).
 func (c *Client) Add(ctx context.Context, trackID int, date Date, delta int, note *NoteEdit) (Result, error) {
 	if delta == 0 {
 		return Result{}, &Error{Kind: ErrBadRequest, Message: "the amount to add must not be 0"}
