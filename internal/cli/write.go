@@ -158,6 +158,9 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if !t.KnownType() {
+				return tickbuddy.NeedsNewerClient(t)
+			}
 			if t.IsCounter() {
 				return usagef("%s is a counter; use `tickcli add` or `tickcli set`", flat(t.Name))
 			}
@@ -195,6 +198,9 @@ func (a *App) setCmd() *cobra.Command {
 			c, t, day, err := a.target(cmd.Context(), args[0], noteNeeds(note)...)
 			if err != nil {
 				return err
+			}
+			if !t.KnownType() {
+				return tickbuddy.NeedsNewerClient(t)
 			}
 			if !t.IsCounter() {
 				return usagef("%s is a yes/no track; use `tickcli tick` or `tickcli untick`", flat(t.Name))
@@ -237,6 +243,9 @@ func (a *App) addCmd() *cobra.Command {
 			c, t, day, err := a.target(cmd.Context(), args[0], noteNeeds(note)...)
 			if err != nil {
 				return err
+			}
+			if !t.KnownType() {
+				return tickbuddy.NeedsNewerClient(t)
 			}
 			if !t.IsCounter() {
 				return usagef("%s is a yes/no track; use `tickcli tick` or `tickcli untick`", flat(t.Name))

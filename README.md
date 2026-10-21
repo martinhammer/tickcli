@@ -169,7 +169,7 @@ nothing; `--force-duplicate` appends it anyway
 |---|---|
 | 0 | success |
 | 1 | error, including a server version too old for the command |
-| 2 | bad usage: unknown command or flag, wrong arguments, a bad date, the wrong command for the track type |
+| 2 | bad usage: unknown command or flag, wrong arguments, a bad date, the wrong command for the track type, or a track of a type this version doesn't know |
 | 3 | not signed in, or the server refused the credentials |
 | 4 | track not found, or the name matches several tracks |
 | 5 | server or network unreachable |

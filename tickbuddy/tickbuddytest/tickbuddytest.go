@@ -6,7 +6,10 @@
 // server's rules where tests rely on them: sparse ticks, the quiet 200 on
 // archived tracks, notes outliving ticks, and feature flags switching
 // endpoints off as an older server would. Track.ReadOnly gives the planned
-// server's 423 instead.
+// server's 423 instead. A track of another type than "boolean" or "counter"
+// (a newer type, such as "future") is left out of GET /tracks, /ticks and
+// /notes unless the client sends includeAllTypes=true, as the planned server
+// does; SetValue gives it values of any JSON.
 //
 // It is shared so that tickcli and TickLLMe test their sign-in against the
 // same fake.
@@ -31,7 +34,7 @@ import (
 type Track struct {
 	ID         int
 	Name       string
-	Type       string // "boolean" or "counter"
+	Type       string // "boolean", "counter", or any newer type
 	Private    bool
 	ArchivedAt string
 	// ReadOnly makes every write to the track answer 423 Locked with this
@@ -76,6 +79,8 @@ type Server struct {
 
 	Tracks []Track
 	Ticks  map[key]int
+	// Values are the values of tracks of newer types, sent as they are.
+	Values map[key]any
 	Notes  map[key]string
 	// Stats are canned answers for GET /api/stats by track id.
 	Stats map[int]map[string]any
@@ -95,9 +100,11 @@ type Server struct {
 	// when other writers kept changing the note.
 	ConflictNext int
 
-	// Requests logs "METHOD path" for every request, Bodies each request's
-	// body ("" without one), and Prefers its Prefer header.
+	// Requests logs "METHOD path" for every request, Queries its query
+	// string, Bodies its body ("" without one), and Prefers its Prefer
+	// header.
 	Requests []string
+	Queries  []string
 	Bodies   []string
 	Prefers  []string
 
@@ -121,6 +128,7 @@ func New() *Server {
 		},
 		APIVersion:       1,
 		Ticks:            map[key]int{},
+		Values:           map[key]any{},
 		Notes:            map[key]string{},
 		Stats:            map[int]map[string]any{},
 		Fail:             http.StatusBadGateway,
@@ -157,6 +165,18 @@ func (s *Server) SetTick(track int, date string, v int) {
 		delete(s.Ticks, key{track, date})
 	} else {
 		s.Ticks[key{track, date}] = v
+	}
+}
+
+// SetValue stores the value of a track of a newer type, any JSON (nil
+// deletes).
+func (s *Server) SetValue(track int, date string, v any) {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	if v == nil {
+		delete(s.Values, key{track, date})
+	} else {
+		s.Values[key{track, date}] = v
 	}
 }
 
@@ -202,6 +222,14 @@ func (s *Server) Logged() []string {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	return slices.Clone(s.Requests)
+}
+
+// LoggedQueries returns the query string of every logged request ("" when
+// none), in the order of Logged.
+func (s *Server) LoggedQueries() []string {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	return slices.Clone(s.Queries)
 }
 
 // LoggedPrefers returns the Prefer header of every logged request ("" when
@@ -275,6 +303,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 	s.Requests = append(s.Requests, r.Method+" "+r.URL.Path)
+	s.Queries = append(s.Queries, r.URL.RawQuery)
 	var raw []byte
 	if r.Body != nil {
 		raw, _ = io.ReadAll(r.Body)
@@ -351,6 +380,16 @@ func (s *Server) track(id int) *Track {
 	return nil
 }
 
+// knownType reports whether a track type is one today's clients know.
+func knownType(typ string) bool { return typ == "boolean" || typ == "counter" }
+
+// hidden reports whether a list leaves the track out: one of a newer type,
+// unless the client asked for all types.
+func (s *Server) hidden(id int, q url.Values) bool {
+	t := s.track(id)
+	return t != nil && !knownType(t.Type) && q.Get("includeAllTypes") != "true"
+}
+
 func trackJSON(t Track, order int) map[string]any {
 	var archived any
 	if t.ArchivedAt != "" {
@@ -410,7 +449,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 	case path == "/tracks" && r.Method == http.MethodGet:
 		out := []any{}
 		for i, t := range s.Tracks {
-			if t.ArchivedAt != "" && (q.Get("includeArchived") != "true" || !feat["archivedTracks"]) {
+			if t.ArchivedAt != "" && (q.Get("includeArchived") != "true" || !feat["archivedTracks"]) || s.hidden(t.ID, q) {
 				continue
 			}
 			out = append(out, trackJSON(t, i))
@@ -441,11 +480,17 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		from, to := q.Get("from"), q.Get("to")
 		out := []any{}
 		n := 0
-		for k, v := range s.Ticks {
-			if k.date >= from && k.date <= to {
+		add := func(k key, v any) {
+			if k.date >= from && k.date <= to && !s.hidden(k.track, q) {
 				n++
 				out = append(out, map[string]any{"id": n, "trackId": k.track, "date": k.date, "value": v})
 			}
+		}
+		for k, v := range s.Ticks {
+			add(k, v)
+		}
+		for k, v := range s.Values {
+			add(k, v)
 		}
 		ocs(w, http.StatusOK, out)
 
@@ -616,7 +661,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		out := []n{}
 		for k, v := range s.Notes {
-			if k.date >= from && k.date <= to {
+			if k.date >= from && k.date <= to && !s.hidden(k.track, q) {
 				out = append(out, n{k.track, k.date, v})
 			}
 		}

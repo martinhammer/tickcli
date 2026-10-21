@@ -3,12 +3,13 @@
 package tickbuddy
 
 import (
+	"bytes"
 	"encoding/json"
-	"fmt"
 	"strconv"
 )
 
-// Track types as the server names them.
+// Track types as the server names them. A newer server may have others:
+// Track.Type keeps whatever it sends, and Track.KnownType tells them apart.
 const (
 	TypeYesNo   = "boolean"
 	TypeCounter = "counter"
@@ -27,15 +28,23 @@ type Track struct {
 // IsCounter reports whether the track counts rather than ticks yes/no.
 func (t Track) IsCounter() bool { return t.Type == TypeCounter }
 
+// KnownType reports whether the track is of a type this package knows
+// (TypeYesNo or TypeCounter). A track of another type can be read, its
+// values kept as the server sent them, and its notes written, but not
+// ticked: refuse that with NeedsNewerClient.
+func (t Track) KnownType() bool { return t.Type == TypeYesNo || t.Type == TypeCounter }
+
 // IsArchived reports whether the track is archived.
 func (t Track) IsArchived() bool { return t.ArchivedAt != nil && !t.ArchivedAt.IsZero() }
 
 // Tick mirrors the server's TickbuddyTick: a day with a tick (yes/no tracks,
 // Value 1) or a count above zero (counters). Days without one aren't listed.
+// Value is as the server sent it: a number for both known types (ValueFor
+// makes it the track's), or any JSON on a track of a newer type.
 type Tick struct {
-	TrackID int  `json:"trackId"`
-	Date    Date `json:"date"`
-	Value   int  `json:"value"`
+	TrackID int   `json:"trackId"`
+	Date    Date  `json:"date"`
+	Value   Value `json:"value"`
 }
 
 // Note mirrors the server's TickbuddyNote.
@@ -73,10 +82,12 @@ type Stats struct {
 }
 
 // Value is a day's value on a track: true/false on a yes/no track, a count
-// on a counter. It marshals to a JSON boolean or number accordingly.
+// on a counter. It marshals to a JSON boolean or number accordingly. Any
+// other JSON, as a track of a newer type may hold, is kept as sent: see Raw.
 type Value struct {
 	isBool bool
 	n      int
+	raw    string // the JSON of any other value, as sent
 }
 
 // BoolValue is a yes/no value.
@@ -90,54 +101,100 @@ func BoolValue(b bool) Value {
 // IntValue is a counter value.
 func IntValue(n int) Value { return Value{n: n} }
 
-// ValueFor is the value of n (a tick's stored value, 0 for no tick) on t.
-func ValueFor(t Track, n int) Value {
-	if t.IsCounter() {
-		return IntValue(n)
+// rawValue is the value b, kept as JSON text.
+func rawValue(b []byte) Value {
+	var c bytes.Buffer
+	if err := json.Compact(&c, b); err != nil {
+		return Value{raw: string(b)}
 	}
-	return BoolValue(n > 0)
+	return Value{raw: c.String()}
+}
+
+// ValueFor is the tick's stored value v as a day's value on t: yes/no or a
+// count. On a track of a type this package doesn't know, it is v as JSON
+// (Raw), unchanged.
+func ValueFor(t Track, v Value) Value {
+	switch {
+	case v.raw != "":
+		return v
+	case !t.KnownType():
+		b, _ := v.MarshalJSON()
+		return Value{raw: string(b)}
+	case t.IsCounter():
+		return IntValue(v.n)
+	}
+	return BoolValue(v.n > 0)
+}
+
+// EmptyValue is the value of a day without a tick on t: no, 0, or JSON
+// null on a track of a type this package doesn't know.
+func EmptyValue(t Track) Value {
+	switch {
+	case !t.KnownType():
+		return Value{raw: "null"}
+	case t.IsCounter():
+		return IntValue(0)
+	}
+	return BoolValue(false)
 }
 
 // IsBool reports whether this is a yes/no value.
 func (v Value) IsBool() bool { return v.isBool }
 
-// Bool is the yes/no state; for a count, whether it is above zero.
+// Bool is the yes/no state; for a count, whether it is above zero; false for
+// a Raw value.
 func (v Value) Bool() bool { return v.n > 0 }
 
-// Int is the count; for a yes/no value, 1 or 0.
+// Int is the count; for a yes/no value, 1 or 0; 0 for a Raw value.
 func (v Value) Int() int { return v.n }
 
+// Raw is the value as the server sent it when it is neither a boolean nor a
+// whole number (7.5, "red", an object, null), or any value on a track of a
+// type this package doesn't know (see ValueFor); nil otherwise.
+func (v Value) Raw() json.RawMessage {
+	if v.raw == "" {
+		return nil
+	}
+	return json.RawMessage(v.raw)
+}
+
+// String is yes/no, the count, or the JSON of a Raw value.
 func (v Value) String() string {
-	if v.isBool {
-		if v.Bool() {
-			return "yes"
-		}
+	switch {
+	case v.raw != "":
+		return v.raw
+	case v.isBool && v.Bool():
+		return "yes"
+	case v.isBool:
 		return "no"
 	}
 	return strconv.Itoa(v.n)
 }
 
-// MarshalJSON writes true/false or a number.
+// MarshalJSON writes true/false, a number, or a Raw value as it came.
 func (v Value) MarshalJSON() ([]byte, error) {
-	if v.isBool {
+	switch {
+	case v.raw != "":
+		return []byte(v.raw), nil
+	case v.isBool:
 		return json.Marshal(v.Bool())
 	}
 	return json.Marshal(v.n)
 }
 
-// UnmarshalJSON reads true/false or an integer.
+// UnmarshalJSON reads true/false or a whole number, and keeps any other
+// JSON as Raw, so a value of a newer track type never fails a decode.
 func (v *Value) UnmarshalJSON(b []byte) error {
-	var x any
-	if err := json.Unmarshal(b, &x); err != nil {
-		return err
-	}
-	switch x := x.(type) {
-	case bool:
-		*v = BoolValue(x)
-	case float64:
-		*v = IntValue(int(x))
+	b = bytes.TrimSpace(b)
+	switch s := string(b); {
+	case s == "true" || s == "false":
+		*v = BoolValue(s == "true")
 	default:
-		return fmt.Errorf("tickbuddy: value %s is neither a boolean nor a number", b)
+		if n, err := strconv.Atoi(s); err == nil {
+			*v = IntValue(n)
+		} else {
+			*v = rawValue(b)
+		}
 	}
 	return nil
 }

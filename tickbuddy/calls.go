@@ -12,11 +12,17 @@ import (
 	"strings"
 )
 
-// Tracks lists the tracks in journal order. Archived tracks are included only
-// when includeArchived is set and the server has archivedTracks (an older
-// server has no archived tracks to show).
+// allTypes asks a server to include tracks of types this package doesn't
+// know, which it leaves out of /tracks, /ticks and /notes otherwise; an
+// older server ignores it. Track.KnownType tells them apart.
+func allTypes() url.Values { return url.Values{"includeAllTypes": {"true"}} }
+
+// Tracks lists the tracks in journal order, of every type (see
+// Track.KnownType). Archived tracks are included only when includeArchived
+// is set and the server has archivedTracks (an older server has no archived
+// tracks to show).
 func (c *Client) Tracks(ctx context.Context, includeArchived bool) ([]Track, error) {
-	q := url.Values{}
+	q := allTypes()
 	if includeArchived {
 		ok, err := c.has(ctx, FeatureArchivedTracks)
 		if err != nil {
@@ -31,9 +37,12 @@ func (c *Client) Tracks(ctx context.Context, includeArchived bool) ([]Track, err
 	return tracks, err
 }
 
-// Ticks lists the ticks from from to to, both included, archived tracks' too.
+// Ticks lists the ticks from from to to, both included, archived tracks'
+// and those of every type too.
 func (c *Client) Ticks(ctx context.Context, from, to Date) ([]Tick, error) {
-	q := url.Values{"from": {from.String()}, "to": {to.String()}}
+	q := allTypes()
+	q.Set("from", from.String())
+	q.Set("to", to.String())
 	var ticks []Tick
 	err := c.do(ctx, request{method: http.MethodGet, path: "/ticks", query: q, retry: true}, &ticks)
 	return ticks, err
@@ -261,7 +270,7 @@ func (c *Client) dayValue(ctx context.Context, trackID int, date Date) (int, err
 	}
 	for _, t := range ticks {
 		if t.TrackID == trackID && t.Date == date {
-			return t.Value, nil
+			return t.Value.Int(), nil
 		}
 	}
 	return 0, nil
@@ -352,18 +361,32 @@ func (c *Client) stats(ctx context.Context, q url.Values, trackID int, includeRu
 	if includeArchived {
 		q.Set("includeArchived", "true")
 	}
+	var raw []json.RawMessage
+	if err := c.do(ctx, request{method: http.MethodGet, path: "/stats", query: q, retry: true}, &raw); err != nil {
+		return nil, err
+	}
+	// One entry at a time, so that a track whose stats don't fit Stats, as
+	// a track of a newer type may give, is left out rather than failing the
+	// others.
 	var stats []Stats
-	err := c.do(ctx, request{method: http.MethodGet, path: "/stats", query: q, retry: true}, &stats)
-	return stats, err
+	for _, r := range raw {
+		var s Stats
+		if json.Unmarshal(r, &s) == nil {
+			stats = append(stats, s)
+		}
+	}
+	return stats, nil
 }
 
 // Notes lists the notes from from to to, newest first, private and archived
-// tracks' included.
+// tracks' and those of every type included.
 func (c *Client) Notes(ctx context.Context, from, to Date) ([]Note, error) {
 	if err := c.need(ctx, FeatureNotes); err != nil {
 		return nil, err
 	}
-	q := url.Values{"from": {from.String()}, "to": {to.String()}}
+	q := allTypes()
+	q.Set("from", from.String())
+	q.Set("to", to.String())
 	var notes []Note
 	err := c.do(ctx, request{method: http.MethodGet, path: "/notes", query: q, retry: true}, &notes)
 	return notes, err

@@ -125,7 +125,7 @@ func exitCode(err error) int {
 	switch {
 	case errors.As(err, &ce):
 		return ce.code
-	case errors.As(err, &ue), errors.Is(err, tickbuddy.ErrBadDate):
+	case errors.As(err, &ue), errors.Is(err, tickbuddy.ErrBadDate), errors.Is(err, tickbuddy.ErrNeedsNewerClient):
 		return exitUsage
 	case errors.Is(err, tickbuddy.ErrNoCredentials), errors.Is(err, tickbuddy.ErrUnauthorized):
 		return exitAuth
@@ -141,7 +141,10 @@ func exitCode(err error) int {
 
 // message is how an error reads to a person.
 func message(err error) string {
+	var te *tickbuddy.TypeError
 	switch {
+	case errors.As(err, &te):
+		return clean(fmt.Sprintf("%s is a %q track; Tickcli update required", flat(te.Track), te.Type))
 	case errors.Is(err, tickbuddy.ErrUnauthorized):
 		return "the server refused the stored credentials; sign in again with `tickcli login <url>`"
 	case errors.Is(err, tickbuddy.ErrNoCredentials) && err == tickbuddy.ErrNoCredentials:

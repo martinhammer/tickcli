@@ -10,7 +10,7 @@ import (
 
 // The kinds of error this package returns. Test for them with errors.Is; the
 // concrete error usually carries more detail (*Error, *FeatureError,
-// *MatchError, *ReadOnlyError).
+// *TypeError, *MatchError, *ReadOnlyError).
 var (
 	// ErrUnauthorized: the server answered 401, so the credentials were refused.
 	ErrUnauthorized = errors.New("the server refused the credentials")
@@ -23,6 +23,10 @@ var (
 	ErrBadRequest = errors.New("the server refused the request")
 	// ErrNeedsNewerServer: a feature flag this call needs is missing.
 	ErrNeedsNewerServer = errors.New("this needs a newer Tickbuddy on the server")
+	// ErrNeedsNewerClient: the track is of a type this package doesn't know
+	// (Track.KnownType), so it can be read and its notes written, but it
+	// can't be ticked. Nothing was sent.
+	ErrNeedsNewerClient = errors.New("this needs a newer client")
 	// ErrReadOnly: the server answered 423, so the track can't be changed
 	// and nothing was. Today's servers answer 200 instead (see Result.Archived).
 	ErrReadOnly = errors.New("the track is read-only")
@@ -71,6 +75,24 @@ func (e *FeatureError) Is(target error) bool { return target == ErrNeedsNewerSer
 
 // NeedsNewerServer returns the error for a missing feature flag.
 func NeedsNewerServer(feature string) error { return &FeatureError{Feature: feature} }
+
+// TypeError is ErrNeedsNewerClient for a track of type Type. A front end
+// words its own message from it, naming itself.
+type TypeError struct {
+	Track string // the track's name
+	Type  string // its type, as the server sent it
+}
+
+func (e *TypeError) Error() string {
+	return fmt.Sprintf("%s is a %q track; this client needs an update to tick it", e.Track, e.Type)
+}
+
+func (e *TypeError) Is(target error) bool { return target == ErrNeedsNewerClient }
+
+// NeedsNewerClient returns the error for writing a value to t, a track of a
+// type this package doesn't know. Check before sending: the package's write
+// calls take a track id, so they can't tell.
+func NeedsNewerClient(t Track) error { return &TypeError{Track: t.Name, Type: t.Type} }
 
 // Reasons a server gives for ErrReadOnly. Others may follow.
 const (

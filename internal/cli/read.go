@@ -152,32 +152,33 @@ func (a *App) weekCmd() *cobra.Command {
 			for i := range stats {
 				statsByID[stats[i].TrackID] = &stats[i]
 			}
-			values := map[[2]any]int{}
+			j := journal{values: map[trackDay]tickbuddy.Value{}}
 			for _, t := range ticks {
-				values[[2]any{t.TrackID, t.Date}] = t.Value
+				j.values[trackDay{t.TrackID, t.Date}] = t.Value
 			}
 			days := make([]tickbuddy.Date, 7)
 			for i := range days {
 				days[i] = today.AddDays(-i)
 			}
 
-			type cell struct {
+			type dayCell struct {
 				Date  tickbuddy.Date  `json:"date"`
 				Value tickbuddy.Value `json:"value"`
 			}
 			type row struct {
 				Track         string         `json:"track"`
 				TrackID       int            `json:"trackId"`
-				Days          []cell         `json:"days"`
+				Days          []dayCell      `json:"days"`
 				Current       *tickbuddy.Run `json:"current"`
 				UpToYesterday bool           `json:"upToYesterday"`
 				stats         *tickbuddy.Stats
+				newer         bool
 			}
 			rows := []row{}
 			for _, t := range a.visible(tracks) {
-				r := row{Track: t.Name, TrackID: t.ID, stats: statsByID[t.ID]}
+				r := row{Track: t.Name, TrackID: t.ID, stats: statsByID[t.ID], newer: !t.KnownType()}
 				for _, d := range days {
-					r.Days = append(r.Days, cell{d, tickbuddy.ValueFor(t, values[[2]any{t.ID, d}])})
+					r.Days = append(r.Days, dayCell{d, j.value(t, d)})
 				}
 				if r.stats != nil {
 					r.Current, r.UpToYesterday = r.stats.Current, r.stats.UpToYesterday
@@ -192,7 +193,7 @@ func (a *App) weekCmd() *cobra.Command {
 				for _, r := range rows {
 					f := []string{flat(r.Track)}
 					for _, c := range r.Days {
-						f = append(f, c.Value.String())
+						f = append(f, flat(c.Value.String()))
 					}
 					f = append(f, runPlain(r.stats))
 					a.printf("%s\n", strings.Join(f, "\t"))
@@ -204,27 +205,29 @@ func (a *App) weekCmd() *cobra.Command {
 				w = max(w, width(flat(r.Track)))
 			}
 			w += 2
-			// Day columns fit the weekday headings and the widest value.
+			// Day columns fit the weekday headings and the widest value; a
+			// value of a track of a newer type is cut to fit them instead.
 			col := 2
 			for _, r := range rows {
 				for _, c := range r.Days {
-					col = max(col, width(symbol(c.Value)))
+					if !r.newer {
+						col = max(col, width(symbol(c.Value)))
+					}
 				}
 			}
-			col++
 			var head strings.Builder
 			for _, d := range days {
-				head.WriteString(pad(d.Weekday().String()[:2], col))
+				head.WriteString(pad(d.Weekday().String()[:2], col+1))
 			}
 			a.printf("%s%s\n", strings.Repeat(" ", w), a.paint(dim, strings.TrimRight(head.String(), " ")))
 			for _, r := range rows {
 				var line strings.Builder
 				line.WriteString(pad(flat(r.Track), w))
 				for _, c := range r.Days {
-					sym := symbol(c.Value)
-					line.WriteString(a.paintSymbol(sym) + strings.Repeat(" ", col-width(sym)))
+					sym := cell(c.Value, col)
+					line.WriteString(a.paintSymbol(sym) + strings.Repeat(" ", col+1-width(sym)))
 				}
-				line.WriteString(" " + runText(r.stats))
+				line.WriteString(" " + runText(r.stats) + a.newerLabel(r.newer))
 				a.printf("%s\n", line.String())
 			}
 			return nil

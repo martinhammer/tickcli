@@ -162,7 +162,7 @@ func (a *App) printTrackDays(t tickbuddy.Track, days []tickbuddy.Date, j journal
 	for _, d := range days {
 		r := j.row(t, d)
 		sym := symbol(r.Value)
-		a.printf("  %s   %s%s\n", pad(label(d), dw), strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym))
+		a.printf("  %s   %s%s%s\n", pad(label(d), dw), strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym), a.newerLabel(r.newer))
 		if r.Note != nil {
 			for _, l := range noteLines(*r.Note) {
 				a.printf("%s%s\n", strings.Repeat(" ", dw+w+6), a.paint(dim, l))

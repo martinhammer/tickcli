@@ -126,8 +126,15 @@ func pad(s string, width int) string {
 
 func width(s string) int { return utf8.RuneCountInString(s) }
 
-// symbol is a day's value as the today view shows it.
+// symbol is a day's value as the today view shows it: a value of a track of
+// a newer type as its JSON, "·" for none.
 func symbol(v tickbuddy.Value) string {
+	if raw := v.Raw(); raw != nil {
+		if string(raw) == "null" {
+			return "·"
+		}
+		return flat(string(raw))
+	}
 	if v.IsBool() {
 		if v.Bool() {
 			return "✓"
@@ -138,6 +145,29 @@ func symbol(v tickbuddy.Value) string {
 		return "·"
 	}
 	return fmt.Sprint(v.Int())
+}
+
+// cell is symbol cut to fit n columns of week's grid: a string without its
+// quotes, and what doesn't fit ending in "…".
+func cell(v tickbuddy.Value, n int) string {
+	sym := symbol(v)
+	var s string
+	if raw := v.Raw(); len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &s) == nil {
+		sym = flat(s)
+	}
+	if width(sym) <= n {
+		return sym
+	}
+	return string([]rune(sym)[:n-1]) + "…"
+}
+
+// newerLabel follows a value of a track of a type this Tickcli doesn't know
+// in pretty output (newer), and is "" otherwise.
+func (a *App) newerLabel(newer bool) string {
+	if !newer {
+		return ""
+	}
+	return "  " + a.paint(dim, "(Tickcli update required)")
 }
 
 func (a *App) paintSymbol(sym string) string {
@@ -185,8 +215,13 @@ func runPlain(st *tickbuddy.Stats) string {
 	return fmt.Sprintf("break %d", st.Current.Length)
 }
 
+// typeName is the track's type for a person: the server's name for a type
+// this Tickcli doesn't know.
 func typeName(t tickbuddy.Track) string {
-	if t.IsCounter() {
+	switch {
+	case !t.KnownType():
+		return flat(t.Type)
+	case t.IsCounter():
 		return "counter"
 	}
 	return "yes/no"

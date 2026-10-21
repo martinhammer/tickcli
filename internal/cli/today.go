@@ -15,6 +15,8 @@ type dayRow struct {
 	Type    string          `json:"type"`
 	Value   tickbuddy.Value `json:"value"`
 	Note    *string         `json:"note,omitempty"`
+	// newer is a track of a type this Tickcli doesn't know.
+	newer bool
 }
 
 // trackDay is one track's day.
@@ -25,14 +27,14 @@ type trackDay struct {
 
 // journal is the values and notes of a run of days.
 type journal struct {
-	values map[trackDay]int
+	values map[trackDay]tickbuddy.Value
 	notes  map[trackDay]string
 }
 
 // readJournal reads the ticks from from to to in one request, and their notes
 // when the server has notes.
 func readJournal(ctx context.Context, c *tickbuddy.Client, from, to tickbuddy.Date) (journal, error) {
-	j := journal{values: map[trackDay]int{}, notes: map[trackDay]string{}}
+	j := journal{values: map[trackDay]tickbuddy.Value{}, notes: map[trackDay]string{}}
 	ticks, err := c.Ticks(ctx, from, to)
 	if err != nil {
 		return j, err
@@ -52,10 +54,18 @@ func readJournal(ctx context.Context, c *tickbuddy.Client, from, to tickbuddy.Da
 	return j, nil
 }
 
+// value is a track's value on a day, unticked when the journal has no tick.
+func (j journal) value(t tickbuddy.Track, day tickbuddy.Date) tickbuddy.Value {
+	if v, ok := j.values[trackDay{t.ID, day}]; ok {
+		return tickbuddy.ValueFor(t, v)
+	}
+	return tickbuddy.EmptyValue(t)
+}
+
 // row is a track's day, unticked when the journal has no tick.
 func (j journal) row(t tickbuddy.Track, day tickbuddy.Date) dayRow {
 	k := trackDay{t.ID, day}
-	r := dayRow{Track: t.Name, TrackID: t.ID, Type: t.Type, Value: tickbuddy.ValueFor(t, j.values[k])}
+	r := dayRow{Track: t.Name, TrackID: t.ID, Type: t.Type, Value: j.value(t, day), newer: !t.KnownType()}
 	if text, ok := j.notes[k]; ok {
 		r.Note = &text
 	}
@@ -104,7 +114,7 @@ func (a *App) runToday(ctx context.Context) error {
 func (a *App) printDay(day tickbuddy.Date, rows []dayRow) {
 	if a.mode() == plain {
 		for _, r := range rows {
-			line := []string{day.String(), flat(r.Track), r.Value.String()}
+			line := []string{day.String(), flat(r.Track), flat(r.Value.String())}
 			if r.Note != nil {
 				line = append(line, flat(*r.Note))
 			}
@@ -124,7 +134,7 @@ func (a *App) printDay(day tickbuddy.Date, rows []dayRow) {
 	}
 	for _, r := range rows {
 		sym := symbol(r.Value)
-		a.printf("  %s%s  %s\n", strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym), flat(r.Track))
+		a.printf("  %s%s  %s%s\n", strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym), flat(r.Track), a.newerLabel(r.newer))
 		if r.Note != nil {
 			for _, l := range noteLines(*r.Note) {
 				a.printf("%s%s\n", strings.Repeat(" ", w+6), a.paint(dim, l))
