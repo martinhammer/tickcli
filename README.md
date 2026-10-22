@@ -1,10 +1,10 @@
 # Tickcli
-Tickcli (pronounced "tickly") is the command line client for [Tickbuddy](https://github.com/martinhammer/tickbuddy).
+Tickcli (pronounced "tickly") is the command line client for [Tickbuddy](https://github.com/martinhammer/tickbuddy), the daily habit and event tracker for Nextcloud.
 
-It can serve many use cases, broadly falling into the following three categories:
+Tickcli can serve many use cases, broadly falling into the following three categories:
 - Command line as an additional interface alongside [web](https://github.com/martinhammer/tickbuddy) and [mobile](https://github.com/martinhammer/tickdroid)
 - Scripting automation, e.g. monitor your jobs via Tickbuddy
-- Building block of [TickLLMe](https://github.com/martinhammer/tickllme), the MCP server and Claude plugin for Tickbuddy 
+- Building block of [TickLLMe](https://github.com/martinhammer/tickllme), the MCP server and Claude plugin for Tickbuddy
 
 ## Examples
 
@@ -124,6 +124,7 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 
 | Command | What it does |
 |---|---|
+| `tickcli help [command]` | Overall and command-specific help. |
 | `tickcli login <url> [--paste] [--qr] [--insecure-http]` | Sign in; see above. |
 | `tickcli logout [--local]` | Forget the credentials and revoke the app password; see above. |
 | `tickcli status` | Who is signed in and where the credentials are. |
