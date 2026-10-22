@@ -263,8 +263,8 @@ func (a *App) visible(tracks []tickbuddy.Track) []tickbuddy.Track {
 func (a *App) rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "tickcli",
-		Short: "Tick Tickbuddy tracks from the command line",
-		Long: `Tickcli is the command-line client for Tickbuddy, the habit tracker for Nextcloud.
+		Short: "Command line client for Tickbuddy",
+		Long: `Tickcli is the command line client for Tickbuddy, the daily habit and event tracker for Nextcloud.
 Run without a command, it shows today's tracks.
 
 Exit codes: 0 done, 1 error, 2 bad usage, 3 not signed in or credentials
