@@ -253,6 +253,35 @@ func TestArchivedResult(t *testing.T) {
 	}
 }
 
+// The server answers set on a yes/no track with 1 or 0; a 2.3.0 pre-release
+// build may have answered true/false. Both read as the same state.
+func TestSetYesNoAnswer(t *testing.T) {
+	for _, boolAnswer := range []bool{false, true} {
+		s, c, _ := setup(t)
+		s.BoolSetAnswer = boolAnswer
+		ctx := context.Background()
+		ex := s.AddTrack("Exercise", "boolean")
+		backup := s.AddTrack("Nightly backup", "boolean")
+		s.SetTick(backup, day.String(), 1)
+		s.Update(backup, func(t *tickbuddytest.Track) { t.ArchivedAt = "2026-10-01" })
+
+		for _, tc := range []struct {
+			track          int
+			ticked         bool
+			want, archived bool
+		}{
+			{ex, true, true, false},
+			{ex, false, false, false},
+			{backup, false, true, true},
+		} {
+			r, err := c.SetYesNo(ctx, tc.track, day, tc.ticked, nil)
+			if err != nil || !r.Value.IsBool() || r.Value.Bool() != tc.want || r.Archived != tc.archived {
+				t.Errorf("bool answer %v, track %d, set %v: %+v %v", boolAnswer, tc.track, tc.ticked, r, err)
+			}
+		}
+	}
+}
+
 func TestMissingFlag(t *testing.T) {
 	s, c, _ := setup(t)
 	ctx := context.Background()

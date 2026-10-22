@@ -75,7 +75,10 @@ type Server struct {
 	// the planned server sends ("trackNotFound"). Today's server sends the
 	// message only.
 	NotFoundReason string
-	APIVersion     int
+	// BoolSetAnswer answers set on a yes/no track with true/false, as a
+	// Tickbuddy 2.3.0 pre-release build may have; the server answers 1 or 0.
+	BoolSetAnswer bool
+	APIVersion    int
 
 	Tracks []Track
 	Ticks  map[key]int
@@ -546,7 +549,14 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request, path string) {
 					delete(s.Ticks, k)
 				}
 			}
-			out := map[string]any{"value": s.Ticks[k] > 0}
+			var v any = 0
+			if s.Ticks[k] > 0 {
+				v = 1
+			}
+			if s.BoolSetAnswer {
+				v = s.Ticks[k] > 0
+			}
+			out := map[string]any{"value": v}
 			if !s.writeNote(w, t, k, b, out) {
 				return
 			}
