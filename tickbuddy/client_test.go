@@ -178,7 +178,7 @@ func TestEveryCall(t *testing.T) {
 		t.Errorf("last request %q", got)
 	}
 
-	tr, err := c.CreateTrack(ctx, "Reading", TypeYesNo)
+	tr, err := c.CreateTrack(ctx, "Reading", TypeYesNo, nil)
 	if err != nil || tr.Name != "Reading" {
 		t.Fatalf("CreateTrack = %+v, %v", tr, err)
 	}

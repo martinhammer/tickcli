@@ -26,4 +26,8 @@
 //	...
 //	t, err := tickbuddy.Resolve(tracks, "exercise", false)
 //	res, err := c.SetYesNo(ctx, t.ID, tickbuddy.Today(), true, nil)
+//
+// Number tracks hold a Decimal, never a float: SetNumber sends the text it
+// is given and the server rounds it to the track's decimal places. Choice
+// tracks hold an option's place: ResolveOption finds it by label or "#2".
 package tickbuddy

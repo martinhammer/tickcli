@@ -20,6 +20,8 @@ type writeResult struct {
 	TrackID int              `json:"trackId"`
 	Date    tickbuddy.Date   `json:"date"`
 	Value   *tickbuddy.Value `json:"value,omitempty"`
+	Unit    *string          `json:"unit,omitempty"`
+	Label   *string          `json:"label,omitempty"`
 	Note    *string          `json:"note,omitempty"`
 }
 
@@ -82,6 +84,35 @@ func amountError(args []string, what, usage string) error {
 		return usagef("the track comes first: tickcli %s", usage)
 	}
 	return usagef("%q isn't %s", args[1], what)
+}
+
+// trackFirst is target for a command whose value can only be checked once
+// the track's type is known. When no track matches and the first argument
+// is a number, it says the track comes first, as amountError does.
+func (a *App) trackFirst(ctx context.Context, args []string, usage string, needs ...string) (*tickbuddy.Client, tickbuddy.Track, tickbuddy.Date, error) {
+	c, t, day, err := a.target(ctx, args[0], needs...)
+	if errors.Is(err, tickbuddy.ErrTrackNotFound) && len(args) == 2 && tickbuddy.ValidNumber(args[0]) {
+		return nil, t, day, usagef("the track comes first: tickcli %s", usage)
+	}
+	return c, t, day, err
+}
+
+// wrongCommand refuses a command that isn't for t's type, naming the one
+// that is; "" when cmd fits (tick and untick for yes/no, add for counters,
+// set for every type but yes/no).
+func wrongCommand(t tickbuddy.Track, cmd string) error {
+	name := flat(t.Name)
+	switch {
+	case t.IsNumber() && cmd != "set":
+		return usagef("%s is a number; use `tickcli set`", name)
+	case t.IsChoice() && cmd != "set":
+		return usagef("%s is a choice; use `tickcli set`", name)
+	case t.IsCounter() && (cmd == "tick" || cmd == "untick"):
+		return usagef("%s is a counter; use `tickcli add` or `tickcli set`", name)
+	case t.Type == tickbuddy.TypeYesNo && (cmd == "set" || cmd == "add"):
+		return usagef("%s is a yes/no track; use `tickcli tick` or `tickcli untick`", name)
+	}
+	return nil
 }
 
 // noteFlags adds the note options of tick, untick, set and add.
@@ -158,11 +189,11 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !t.KnownType() {
+			if !t.Known() {
 				return tickbuddy.NeedsNewerClient(t)
 			}
-			if t.IsCounter() {
-				return usagef("%s is a counter; use `tickcli add` or `tickcli set`", flat(t.Name))
+			if err := wrongCommand(t, name); err != nil {
+				return err
 			}
 			if t.IsArchived() {
 				return archivedError(t)
@@ -183,32 +214,69 @@ func (a *App) tickCmd(ticked bool) *cobra.Command {
 
 func (a *App) setCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set <track> <n> [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]",
-		Short: "Set a counter to n (0 removes the count)",
-		Args:  args(2, 2),
+		Use:   "set <track> <value> [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]",
+		Short: "Set a counter, number or choice on a day",
+		Long: `Set a track's value on a day (default: today):
+
+  counter: a whole number; 0 removes the count
+  number:  a number with a point and no grouping, such as 10.4 or -1.5;
+           the server rounds it to the track's decimal places
+  choice:  an option's label (any case), or '#2' for the second option
+
+"" clears a number or choice day. In a script, an empty variable clears the
+day too: tickcli set Run "$km" with $km empty leaves Run without a value.
+Quote '#2', since # starts a comment in a shell.`,
+		Example: `  tickcli set "Cups of coffee" 3
+  tickcli set Run 10.4
+  tickcli set "Greenhouse low" -1.5
+  tickcli set "Greenhouse low" "$(read-sensor)"
+  tickcli set "Mum's mood" happy --note "Calmer after lunch"
+  tickcli set "Mum's mood" '#2'
+  tickcli set Run ""`,
+		Args: args(2, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			n, err := strconv.Atoi(args[1])
-			if err != nil || n < 0 {
-				return amountError(args, "a count; use a whole number, 0 or more", "set <track> <n>")
-			}
 			note, err := noteEdit(cmd)
 			if err != nil {
 				return err
 			}
-			c, t, day, err := a.target(cmd.Context(), args[0], noteNeeds(note)...)
+			ctx := cmd.Context()
+			c, t, day, err := a.trackFirst(ctx, args, "set <track> <value>", noteNeeds(note)...)
 			if err != nil {
 				return err
 			}
-			if !t.KnownType() {
+			if !t.Known() {
 				return tickbuddy.NeedsNewerClient(t)
 			}
-			if !t.IsCounter() {
-				return usagef("%s is a yes/no track; use `tickcli tick` or `tickcli untick`", flat(t.Name))
+			if err := wrongCommand(t, "set"); err != nil {
+				return err
+			}
+			value := strings.TrimSpace(args[1])
+			var send func() (tickbuddy.Result, error)
+			switch {
+			case t.IsCounter():
+				n, err := strconv.Atoi(args[1])
+				if err != nil || n < 0 {
+					return usagef("%q isn't a count; use a whole number, 0 or more", args[1])
+				}
+				send = func() (tickbuddy.Result, error) { return c.SetCount(ctx, t.ID, day, n, note) }
+			case value == "":
+				send = func() (tickbuddy.Result, error) { return c.ClearValue(ctx, t.ID, day, note) }
+			case t.IsNumber():
+				if !tickbuddy.ValidNumber(value) {
+					return usagef(`%s takes a number with a point, such as 10.4, or "" to clear the day`, flat(t.Name))
+				}
+				send = func() (tickbuddy.Result, error) { return c.SetNumber(ctx, t.ID, day, value, note) }
+			default:
+				o, err := tickbuddy.ResolveOption(t, value, a.interactive())
+				if err != nil {
+					return optionError(err)
+				}
+				send = func() (tickbuddy.Result, error) { return c.SetChoice(ctx, t.ID, day, o.Value, note) }
 			}
 			if t.IsArchived() {
 				return archivedError(t)
 			}
-			r, err := c.SetCount(cmd.Context(), t.ID, day, n, note)
+			r, err := send()
 			if err != nil {
 				return readOnly(t, err)
 			}
@@ -222,19 +290,41 @@ func (a *App) setCmd() *cobra.Command {
 	return cmd
 }
 
+// optionError is ResolveOption's error with the track's name and the labels
+// cleaned for a terminal, one line each.
+func optionError(err error) error {
+	var oe *tickbuddy.OptionError
+	if !errors.As(err, &oe) {
+		return err
+	}
+	out := *oe
+	out.Track, out.Candidates = flat(oe.Track), nil
+	for _, o := range oe.Candidates {
+		out.Candidates = append(out.Candidates, tickbuddy.ChoiceOption{Value: o.Value, Label: flat(o.Label)})
+	}
+	return &out
+}
+
 func (a *App) addCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <track> [n] [-d date] [--note text [--append [--force-duplicate]] | --append-note text [--force-duplicate]]",
 		Short: "Add n (default 1) to a counter; negative takes away",
-		Args:  args(1, 2),
+		Long: `Add n (default 1) to a counter; a negative n takes away, never below 0.
+add is for counters only. To add to a number, read the day with tickcli
+ticks and set the new total with tickcli set.`,
+		Args: args(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			n := 1
+			var amountErr error
 			if len(args) == 2 {
 				var err error
 				n, err = strconv.Atoi(args[1])
 				if err != nil || n == 0 {
-					return amountError(args, "an amount to add; use a whole number other than 0", "add <track> [n]")
+					amountErr = amountError(args, "an amount to add; use a whole number other than 0", "add <track> [n]")
 				}
+			}
+			if _, err := strconv.Atoi(args[0]); err == nil && amountErr != nil {
+				return amountErr
 			}
 			note, err := noteEdit(cmd)
 			if err != nil {
@@ -244,11 +334,16 @@ func (a *App) addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !t.KnownType() {
+			if !t.Known() {
 				return tickbuddy.NeedsNewerClient(t)
 			}
-			if !t.IsCounter() {
-				return usagef("%s is a yes/no track; use `tickcli tick` or `tickcli untick`", flat(t.Name))
+			// The track's type first: a Number's "add Run 2.5" is told to
+			// use set, not that 2.5 isn't a whole number.
+			if err := wrongCommand(t, "add"); err != nil {
+				return err
+			}
+			if amountErr != nil {
+				return amountErr
 			}
 			if t.IsArchived() {
 				return archivedError(t)
@@ -275,6 +370,7 @@ func (a *App) wrote(t tickbuddy.Track, day tickbuddy.Date, r tickbuddy.Result, s
 	switch a.mode() {
 	case jsonMode:
 		out := writeResult{Track: t.Name, TrackID: t.ID, Date: day, Value: &r.Value}
+		out.Unit, out.Label = valueExtras(t, r.Value)
 		if sent != nil {
 			out.Note = r.Note
 		}
@@ -283,10 +379,15 @@ func (a *App) wrote(t tickbuddy.Track, day tickbuddy.Date, r tickbuddy.Result, s
 		return nil
 	}
 	var line string
-	if t.IsCounter() {
+	switch {
+	case t.IsCounter():
 		line = fmt.Sprintf("%s: %d · %s", flat(t.Name), r.Value.Int(), shortDay(day))
-	} else {
-		line = fmt.Sprintf("%s %s · %s", a.paintSymbol(symbol(r.Value)), flat(t.Name), shortDay(day))
+	case (t.IsNumber() || t.IsChoice()) && r.Value.IsNull():
+		line = fmt.Sprintf("%s: no value · %s", flat(t.Name), shortDay(day))
+	case t.IsNumber() || t.IsChoice():
+		line = fmt.Sprintf("%s: %s · %s", flat(t.Name), a.symbol(t, r.Value), shortDay(day))
+	default:
+		line = fmt.Sprintf("%s %s · %s", a.paintSymbol(a.symbol(t, r.Value)), flat(t.Name), shortDay(day))
 	}
 	if sent != nil {
 		line += "  " + noteText(r.Note, sent.Append)

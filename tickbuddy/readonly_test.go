@@ -33,7 +33,7 @@ func TestStrictHeader(t *testing.T) {
 	_, _ = c.Notes(ctx, day, day)
 	_, _ = c.Stats(ctx, day, 0, false, false)
 	_, _ = c.RenameTrack(ctx, ex, "Walk")
-	_, _ = c.CreateTrack(ctx, "Reading", TypeYesNo)
+	_, _ = c.CreateTrack(ctx, "Reading", TypeYesNo, nil)
 	_, _ = c.Export(ctx, false)
 	_ = c.RevokeAppPassword(ctx)
 	f, err := StartLogin(ctx, s.URL, "Tickcli", nil)

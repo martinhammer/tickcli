@@ -58,6 +58,7 @@ type App struct {
 
 type options struct {
 	json     bool
+	numeric  bool
 	private  bool
 	archived bool
 	date     string
@@ -125,7 +126,8 @@ func exitCode(err error) int {
 	switch {
 	case errors.As(err, &ce):
 		return ce.code
-	case errors.As(err, &ue), errors.Is(err, tickbuddy.ErrBadDate), errors.Is(err, tickbuddy.ErrNeedsNewerClient):
+	case errors.As(err, &ue), errors.Is(err, tickbuddy.ErrBadDate), errors.Is(err, tickbuddy.ErrNeedsNewerClient),
+		errors.Is(err, tickbuddy.ErrBadNumber), errors.Is(err, tickbuddy.ErrOptionNotFound), errors.Is(err, tickbuddy.ErrOptionAmbiguous):
 		return exitUsage
 	case errors.Is(err, tickbuddy.ErrNoCredentials), errors.Is(err, tickbuddy.ErrUnauthorized):
 		return exitAuth
@@ -172,8 +174,9 @@ func (a *App) fail(err error) int {
 	return code
 }
 
-// protectNegatives lets `tickcli add coffee -2` mean "take 2 away". When a
-// bare negative number is among the arguments, the flags (with their values)
+// protectNegatives lets `tickcli add coffee -2` mean "take 2 away", and
+// `tickcli set "Greenhouse low" -1.5` set a negative reading. When a bare
+// negative number is among the arguments, the flags (with their values)
 // and the command name go first, then "--", then the other arguments in
 // their original order, so the flag parser leaves the number alone and the
 // track still has to come before it.
@@ -181,7 +184,7 @@ func protectNegatives(args []string) []string {
 	if slices.Contains(args, "--") {
 		return args
 	}
-	negative := regexp.MustCompile(`^-[0-9]+$`)
+	negative := regexp.MustCompile(`^-[0-9]+(\.[0-9]+)?$`)
 	takesValue := map[string]bool{"-d": true, "--date": true, "--note": true, "--append-note": true, "--retries": true, "--from": true, "--to": true}
 	var flags, positional []string
 	found := false
@@ -267,9 +270,10 @@ func (a *App) rootCmd() *cobra.Command {
 		Long: `Tickcli is the command line client for Tickbuddy, the daily habit and event tracker for Nextcloud.
 Run without a command, it shows today's tracks.
 
-Exit codes: 0 done, 1 error, 2 bad usage, 3 not signed in or credentials
-refused, 4 track not found or ambiguous, 5 server or network unreachable,
-6 track is read-only (archived), so nothing was changed.`,
+Exit codes: 0 done, 1 error, 2 bad usage (a value the track can't take
+included), 3 not signed in or credentials refused, 4 track not found or
+ambiguous, 5 server or network unreachable, 6 track is read-only
+(archived), so nothing was changed.`,
 		Version:       version,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -287,6 +291,7 @@ refused, 4 track not found or ambiguous, 5 server or network unreachable,
 
 	pf := root.PersistentFlags()
 	pf.BoolVar(&a.opts.json, "json", false, "write JSON")
+	pf.BoolVar(&a.opts.numeric, "numeric", false, "show Choice options and Yes/No days as numbers")
 	pf.BoolVar(&a.opts.private, "private", false, "include private tracks in lists")
 	pf.BoolVar(&a.opts.archived, "archived", false, "include archived tracks in lists")
 	pf.StringVarP(&a.opts.date, "date", "d", "", "the day: YYYY-MM-DD, today, yesterday or -N (N days ago)")

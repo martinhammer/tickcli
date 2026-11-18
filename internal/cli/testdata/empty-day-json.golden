@@ -1,0 +1,12 @@
+$ tickcli -d 2026-10-10 --json
+{"date":"2026-10-10","tracks":[{"track":"Exercise","trackId":1,"type":"boolean","value":false},{"track":"Made someone smile","trackId":2,"type":"boolean","value":false},{"track":"Cups of coffee","trackId":3,"type":"counter","value":0},{"track":"Nightly backup","trackId":4,"type":"boolean","value":false},{"track":"Run","trackId":7,"type":"number","value":null,"unit":"km"},{"track":"Greenhouse low","trackId":8,"type":"number","value":null,"unit":"°C"},{"track":"Weight","trackId":9,"type":"number","value":null},{"track":"Mum's mood","trackId":10,"type":"choice","value":null},{"track":"Morning exercise","trackId":11,"type":"choice","value":null},{"track":"Pain","trackId":12,"type":"choice","value":null},{"track":"Mood","trackId":13,"type":"future","value":null}]}
+$ tickcli ticks Run -d 2026-10-10 --json
+{"from":"2026-10-10","to":"2026-10-10","tracks":[{"track":"Run","trackId":7,"type":"number","days":[{"date":"2026-10-10","value":null,"unit":"km"}]}]}
+$ tickcli ticks "Mum's mood" -d 2026-10-10 --json
+{"from":"2026-10-10","to":"2026-10-10","tracks":[{"track":"Mum's mood","trackId":10,"type":"choice","days":[{"date":"2026-10-10","value":null}]}]}
+$ tickcli ticks Mood -d 2026-10-10 --json
+{"from":"2026-10-10","to":"2026-10-10","tracks":[{"track":"Mood","trackId":13,"type":"future","days":[{"date":"2026-10-10","value":null}]}]}
+$ tickcli set Run "" --json
+{"track":"Run","trackId":7,"date":"2026-10-18","value":null,"unit":"km"}
+$ tickcli set "Mum's mood" "" --json
+{"track":"Mum's mood","trackId":10,"date":"2026-10-18","value":null}

@@ -15,6 +15,12 @@ $ tickcli tick exercise
 $ tickcli add coffee 2 --note "one decaf"
 Cups of coffee: 5 · Sun 18 Oct  📝 one decaf
 
+$ tickcli set run 10.4
+Run: 10.4 km · Sun 18 Oct
+
+$ tickcli set "mum's mood" happy
+Mum's mood: Happy · Sun 18 Oct
+
 $ tickcli week
                     Su Sa Fr Th We Tu Mo
 Exercise            ✓  ✓  ·  ·  ✓  ✓  ✓   2-day streak
@@ -36,11 +42,20 @@ Nightly backup automation via cron
 30 2 * * * restic backup /srv && tickcli tick "Nightly backup" --note "$(date +%H:%M)"
 ```
 
+Logging a sensor reading from a script (an empty reading clears the day, as `""` does)
+
+```crontab
+0 7 * * * tickcli set "Greenhouse low" "$(read-sensor)"
+```
+
 Reading values in a script
 
 ```
 $ tickcli ticks "Nightly backup" -d yesterday | cut -f3
 yes
+
+$ tickcli ticks Run -d -2 | cut -f3
+10.4
 
 $ tickcli ticks Exercise --year 2025 --json | jq '[.tracks[].days[] | select(.value)] | length'
 212
@@ -118,6 +133,8 @@ The `login` command uses the keychain when it can and reports where it stored th
 
 Tracks are named by their exact name (ignoring case) or by #id retrieved through `tickcli tracks`.
 
+Tickbuddy has four types of track: yes/no (tick and untick), counter (add and set a whole number), number (set a numeric reading such as 10.4 km, with the track's defined unit and decimal places) and choice (set one of the track's options, such as Happy). `tickcli tracks` lists each number's unit and decimal places and each choice's options.
+
 Today is the default date for most commands; use `-d` to specify another day. Dates are `YYYY-MM-DD`, `today`, `yesterday` or `-N` for N days ago. "Today" means the machine's local date, not the server's.
 
 ### Command reference
@@ -136,8 +153,8 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 | `tickcli stats [track] [--from date] [--to date] [--year YYYY] [--private] [--archived]` | Totals, weekly mean, last two weeks, current run, longest streak and break, for all time or a period: `--from`/`--to` (either alone) or `--year`, not both. |
 | `tickcli tick <track> [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Tick a yes/no track. |
 | `tickcli untick <track> [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Untick it. |
-| `tickcli set <track> <n> [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Set a counter to n; 0 removes the count. |
-| `tickcli add <track> [n] [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Add n (default 1) to a counter; `-2` takes 2 away. |
+| `tickcli set <track> <value> [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Set a counter to a whole number (0 removes the count), a number track to a number such as `10.4` or `-1.5`, or a choice track to an option's label or `'#2'` for its second option. `""` clears a number or choice day. |
+| `tickcli add <track> [n] [-d date] [--note text [--append [--force-duplicate]] \| --append-note text [--force-duplicate]]` | Add n (default 1) to a counter; `-2` takes 2 away. Counters only: to add to a number, read the day and `set` the new total. |
 | `tickcli note <track> ("text" [--append [--force-duplicate]] \| --clear) [-d date]` | Set or replace a day's note (any track type). `--append` adds the text on a new line instead, skipping lines the note already holds unless `--force-duplicate`; `--clear` deletes the note. |
 | `tickcli export [--private]` | The server's JSON export, unchanged: `tickcli export > backup.json`. |
 
@@ -150,7 +167,19 @@ Today is the default date for most commands; use `-d` to specify another day. Da
 - When appending to notes, duplicate lines are ignored so that running the same command again changes
 nothing; `--force-duplicate` appends it anyway
 - `stats --year 2025`, then `stats --year 2026`, compares a track year on year; `--from` and `--to` give any other period (`--from -30` is the last 30 days and today). Given any period, "Last 7 days" and "Previous 7" refer to its last two weeks, and a period that ended before today shows its run as of the last day, labelled "At the end".
-- `ticks` piped prints the today view's lines, one per track per day, oldest day first: date, track, `yes`/`no` or the count, and the note if any. With `--json` it is `{"from", "to", "tracks": [{"track", "trackId", "type", "days": [{"date", "value", "note"}]}]}`, every day listed (`note` only when there is one), even for a single day.
+- `ticks` piped prints the today view's lines, one per track per day, oldest day first: date, track, the value, and the note if any. The value is `yes`/`no`, the count, a number at its track's decimal places without its unit (`10.4`), a choice's label (`Happy`), or an empty field for a number or choice day without a value. With `--json` it is `{"from", "to", "tracks": [{"track", "trackId", "type", "days": [{"date", "value", "note"}]}]}`, every day listed (`note` only when there is one), even for a single day; a number's day adds `unit` and a choice's `label`.
+- `--numeric` shows a choice's place instead of its label (`2` for Happy) and yes/no days as `1` and `0`, in the today view, `ticks`, `week` and `set`; `--json` is unchanged.
+
+### Number and choice tracks
+
+- Numbers always use a point as the decimal separator and no grouping: `10.4`, not `10,4` or `1,204.5`.
+- The server rounds a number to the track's decimal places, half away from zero: on a track with 1 decimal place, `tickcli set Run 10.46` stores 10.5. Tickcli shows the value the server stored.
+- A number below 0 needs a track that allows negative values; `tickcli tracks` says which do.
+- A choice's option is its label, ignoring case (`happy`), or `'#2'` for the second option. Quote `'#2'`, since `#` starts a comment in a shell. A bare `2` is a label, so an option called "2" is never mistaken for a place.
+- `tickcli set Run ""` clears the day. In a script, an empty variable does the same: `tickcli set Run "$km"` with `$km` empty clears Run rather than failing.
+- `add` is for counters only. To add a second run to today's, read the day (`tickcli ticks Run`) and set the new total.
+- `stats` on a number or choice track counts days with an entry: total, weekly mean, the last two weeks and the streaks.
+- Number and choice tracks need a Tickbuddy whose `tickcli status` lists neither `numberTracks` nor `choiceTracks` as missing; an older server has no such tracks.
 
 ### Retry
 - Requests that are safe to repeat are retried up to 3 times (after 1, 2 and 4 seconds) when the server can't be reached. This can be controlled via `--retries n`. 
@@ -161,7 +190,7 @@ nothing; `--force-duplicate` appends it anyway
 
 - **At a terminal**, output is pretty-printed with colour. `NO_COLOR` (any value) or `TERM=dumb` turns colour off.
 - **Piped**, output is tab-separated lines with dates as `YYYY-MM-DD`, and writes print nothing on success, so a script's log stays quiet.
-- **`--json`** gives JSON on every command. A write answers `{"track", "trackId", "date", "value"}` (`value` is true/false on yes/no tracks and a number on counters), plus `"note"`, the whole note afterwards, when one was set or appended.
+- **`--json`** gives JSON on every command. A write answers `{"track", "trackId", "date", "value"}` (`value` is true/false on yes/no tracks, a number on counters, the stored value exactly on number tracks with `"unit"` when the track has one, and the option's place on choice tracks with its `"label"`; `null` after clearing), plus `"note"`, the whole note afterwards, when one was set or appended.
 - Errors always go to stderr as `tickcli: <message>`, or with `--json` as `{"error": "<message>", "code": <exit code>}`.
 
 ### Exit codes
@@ -170,7 +199,7 @@ nothing; `--force-duplicate` appends it anyway
 |---|---|
 | 0 | success |
 | 1 | error, including a server version too old for the command |
-| 2 | bad usage: unknown command or flag, wrong arguments, a bad date, the wrong command for the track type, or a track of a type this version doesn't know |
+| 2 | bad usage: unknown command or flag, wrong arguments, a bad date, the wrong command for the track type, a value that isn't a number on a number track, an option the choice track doesn't have, or a track of a type this version doesn't know |
 | 3 | not signed in, or the server refused the credentials |
 | 4 | track not found, or the name matches several tracks |
 | 5 | server or network unreachable |

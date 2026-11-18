@@ -1,0 +1,11 @@
+1	Exercise	boolean	
+2	Made someone smile	boolean	
+3	Cups of coffee	counter	
+4	Nightly backup	boolean	
+7	Run	number	
+8	Greenhouse low	number	
+9	Weight	number	
+10	Mum's mood	choice	
+11	Morning exercise	choice	
+12	Pain	choice	
+13	Mood	future	

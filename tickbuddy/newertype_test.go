@@ -14,9 +14,10 @@ import (
 	"time"
 )
 
-// TestValueRaw: anything but a boolean or a whole number is kept as sent.
+// TestValueRaw: anything but a boolean, a whole number or null is kept as
+// sent.
 func TestValueRaw(t *testing.T) {
-	for _, in := range []string{`7.5`, `"red"`, `{"a": [1, 2]}`, `null`, `7.0`, `1e3`} {
+	for _, in := range []string{`7.5`, `"red"`, `{"a": [1, 2]}`, `7.0`, `1e3`} {
 		var v Value
 		if err := json.Unmarshal([]byte(in), &v); err != nil {
 			t.Fatalf("%s: %v", in, err)
@@ -30,18 +31,27 @@ func TestValueRaw(t *testing.T) {
 			t.Errorf("%s marshals to %s", in, b)
 		}
 	}
-	for _, in := range []string{`true`, `false`, `7`, `-2`} {
+	for _, in := range []string{`true`, `false`, `7`, `-2`, `null`} {
 		var v Value
 		if err := json.Unmarshal([]byte(in), &v); err != nil || v.Raw() != nil {
 			t.Errorf("%s: Raw %s, %v", in, v.Raw(), err)
 		}
+		if v.IsNull() != (in == "null") {
+			t.Errorf("%s: IsNull %v", in, v.IsNull())
+		}
+	}
+	// null decodes as null also in a struct field, as in set's answer.
+	var a struct{ Value Value }
+	a.Value = IntValue(3)
+	if err := json.Unmarshal([]byte(`{"Value": null}`), &a); err != nil || !a.Value.IsNull() || a.Value.String() != "" {
+		t.Errorf("null field: %#v, %v", a.Value, err)
 	}
 }
 
 func TestValueFor(t *testing.T) {
 	yesNo, counter, future := Track{Type: TypeYesNo}, Track{Type: TypeCounter}, Track{Type: "future"}
-	if !yesNo.KnownType() || !counter.KnownType() || future.KnownType() {
-		t.Error("KnownType")
+	if !yesNo.Known() || !counter.Known() || future.Known() {
+		t.Error("Known")
 	}
 	for _, tc := range []struct {
 		t    Track
@@ -56,13 +66,16 @@ func TestValueFor(t *testing.T) {
 		if b, _ := json.Marshal(got); string(b) != tc.want {
 			t.Errorf("ValueFor(%s, %v) = %s", tc.t.Type, tc.v, b)
 		}
-		if !tc.t.KnownType() && (got.Raw() == nil || got.String() != tc.want) {
+		if !tc.t.Known() && (got.Raw() == nil || got.String() != tc.want) {
 			t.Errorf("ValueFor(%s, %v): Raw %s, String %q", tc.t.Type, tc.v, got.Raw(), got)
 		}
 	}
-	for tr, want := range map[Track]string{yesNo: "false", counter: "0", future: "null"} {
-		if b, _ := json.Marshal(EmptyValue(tr)); string(b) != want {
-			t.Errorf("EmptyValue(%s) = %s", tr.Type, b)
+	for _, tc := range []struct {
+		t    Track
+		want string
+	}{{yesNo, "false"}, {counter, "0"}, {future, "null"}, {Track{Type: TypeNumber}, "null"}, {Track{Type: TypeChoice}, "null"}} {
+		if b, _ := json.Marshal(EmptyValue(tc.t)); string(b) != tc.want || EmptyValue(tc.t).IsNull() != (tc.want == "null") {
+			t.Errorf("EmptyValue(%s) = %s", tc.t.Type, b)
 		}
 	}
 }
@@ -82,7 +95,7 @@ func TestNewerType(t *testing.T) {
 	s.SetNote(mood, "2026-10-18", "grumpy")
 
 	tracks, err := c.Tracks(ctx, false)
-	if err != nil || len(tracks) != 2 || tracks[1].Type != "future" || tracks[1].KnownType() {
+	if err != nil || len(tracks) != 2 || tracks[1].Type != "future" || tracks[1].Known() {
 		t.Fatalf("Tracks = %+v, %v", tracks, err)
 	}
 	ticks, err := c.Ticks(ctx, Date{2026, time.October, 16}, Date{2026, time.October, 18})
@@ -136,7 +149,7 @@ func TestStatsLeavesOut(t *testing.T) {
 	ex := s.AddTrack("Exercise", TypeYesNo)
 	mood := s.AddTrack("Mood", "future")
 	s.Stats[ex] = map[string]any{"total": 3}
-	s.Stats[mood] = map[string]any{"total": 3, "maxValue": 7.5}
+	s.Stats[mood] = map[string]any{"total": 3.5, "maxValue": 7.5}
 	stats, err := c.Stats(context.Background(), Date{2026, time.October, 18}, 0, false, false)
 	if err != nil || len(stats) != 1 || stats[0].TrackID != ex {
 		t.Errorf("Stats = %+v, %v", stats, err)

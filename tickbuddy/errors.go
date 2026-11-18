@@ -10,7 +10,7 @@ import (
 
 // The kinds of error this package returns. Test for them with errors.Is; the
 // concrete error usually carries more detail (*Error, *FeatureError,
-// *TypeError, *MatchError, *ReadOnlyError).
+// *TypeError, *MatchError, *OptionError, *ReadOnlyError).
 var (
 	// ErrUnauthorized: the server answered 401, so the credentials were refused.
 	ErrUnauthorized = errors.New("the server refused the credentials")
@@ -24,7 +24,7 @@ var (
 	// ErrNeedsNewerServer: a feature flag this call needs is missing.
 	ErrNeedsNewerServer = errors.New("this needs a newer Tickbuddy on the server")
 	// ErrNeedsNewerClient: the track is of a type this package doesn't know
-	// (Track.KnownType), so it can be read and its notes written, but it
+	// (Track.Known), so it can be read and its notes written, but it
 	// can't be ticked. Nothing was sent.
 	ErrNeedsNewerClient = errors.New("this needs a newer client")
 	// ErrReadOnly: the server answered 423, so the track can't be changed
@@ -43,6 +43,14 @@ var (
 	ErrBadDate = errors.New("not a date")
 	// ErrNoCredentials: no credentials in the environment, keychain or file.
 	ErrNoCredentials = errors.New("not signed in")
+	// ErrBadNumber: SetNumber's text isn't a number as the API takes it
+	// (ValidNumber). Nothing was sent.
+	ErrBadNumber = errors.New("not a number such as 10.4")
+	// ErrOptionNotFound: no option of a Choice track matched (ResolveOption),
+	// or the server answered 404 with the reason optionNotFound.
+	ErrOptionNotFound = errors.New("option not found")
+	// ErrOptionAmbiguous: a label matched several options of a Choice track.
+	ErrOptionAmbiguous = errors.New("several options match")
 )
 
 // Error is a failed request. Kind is one of the Err* values above and
@@ -151,3 +159,34 @@ func (e *MatchError) Error() string {
 }
 
 func (e *MatchError) Unwrap() error { return e.Kind }
+
+// OptionError is ErrOptionNotFound or ErrOptionAmbiguous from ResolveOption.
+// Candidates are the options that matched (ambiguous) or all the track's
+// options (not found), with their places.
+type OptionError struct {
+	Kind       error
+	Track      string // the track's name
+	Query      string
+	Candidates []ChoiceOption
+}
+
+func (e *OptionError) Error() string {
+	var b strings.Builder
+	if e.Kind == ErrOptionAmbiguous {
+		fmt.Fprintf(&b, "%q matches several options of %s: ", e.Query, e.Track)
+	} else {
+		fmt.Fprintf(&b, "%s has no option %q", e.Track, e.Query)
+		if len(e.Candidates) > 0 {
+			b.WriteString(". Options: ")
+		}
+	}
+	for i, o := range e.Candidates {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "%s (#%d)", o.Label, o.Value)
+	}
+	return b.String()
+}
+
+func (e *OptionError) Unwrap() error { return e.Kind }

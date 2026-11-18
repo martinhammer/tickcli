@@ -223,6 +223,8 @@ func (c *Client) once(ctx context.Context, method, u string, api bool, user, pas
 		// Nextcloud's own 404 for an app that is disabled or missing.
 		e.Kind = ErrNotInstalled
 		e.Message = ""
+	case resp.StatusCode == http.StatusNotFound && reason(env) == reasonOptionNotFound:
+		e.Kind = ErrOptionNotFound
 	case resp.StatusCode == http.StatusNotFound:
 		e.Kind = ErrTrackNotFound
 	case resp.StatusCode >= 500:
@@ -254,6 +256,21 @@ func trackNotFound(env envelope) bool {
 		Message string `json:"message"`
 	}
 	return len(env.OCS.Data) > 0 && json.Unmarshal(env.OCS.Data, &d) == nil && (d.Reason != "" || d.Message != "")
+}
+
+// reasonOptionNotFound is the 404's reason for a Choice option that doesn't
+// exist (PUT /tracks/{id}/options/{value}).
+const reasonOptionNotFound = "optionNotFound"
+
+// reason is the reason the server gives in an error's data, if any.
+func reason(env envelope) string {
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	if len(env.OCS.Data) > 0 && json.Unmarshal(env.OCS.Data, &d) == nil {
+		return d.Reason
+	}
+	return ""
 }
 
 func serverMessage(env envelope) string {
@@ -294,10 +311,12 @@ const (
 	FeatureNotes            = "notes"
 	FeatureStatsPeriod      = "statsPeriod"
 	FeatureNotesAppend      = "notesAppend"
+	FeatureNumberTracks     = "numberTracks"
+	FeatureChoiceTracks     = "choiceTracks"
 )
 
 // Features lists the flags above, in the order status messages show them.
-var Features = []string{FeatureArchivedTracks, FeatureBooleanSet, FeatureCounterIncrement, FeatureStats, FeatureStatsPeriod, FeatureNotes, FeatureNotesAppend}
+var Features = []string{FeatureArchivedTracks, FeatureBooleanSet, FeatureCounterIncrement, FeatureStats, FeatureStatsPeriod, FeatureNotes, FeatureNotesAppend, FeatureNumberTracks, FeatureChoiceTracks}
 
 // Capabilities reads the server's tickbuddy capabilities once per client and
 // caches them. It fails with ErrNotInstalled when the server has no

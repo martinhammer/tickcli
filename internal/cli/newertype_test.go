@@ -145,7 +145,7 @@ func TestNewerTypeStats(t *testing.T) {
 	if r := e.run(false, "", "stats", "Mood"); r.code != 0 || !strings.Contains(r.stdout, "total\t3\n") {
 		t.Errorf("stats Mood: %+v", r)
 	}
-	e.srv.Stats[e.ids["mood"]] = map[string]any{"total": 3, "maxValue": 7.5}
+	e.srv.Stats[e.ids["mood"]] = map[string]any{"total": 3.5}
 	if r := e.run(false, "", "stats"); r.code != 0 || strings.Contains(r.stdout, "Mood") || !strings.Contains(r.stdout, "Exercise\t212") {
 		t.Errorf("stats, Mood's unreadable: %+v", r)
 	}
@@ -154,8 +154,9 @@ func TestNewerTypeStats(t *testing.T) {
 	}
 }
 
-// TestIncludeAllTypes: sent on GET /tracks, /ticks and /notes, on every
-// call, and nowhere else (decision 32).
+// TestIncludeAllTypes: sent on GET /tracks, /ticks, /notes and /stats, on
+// every call, and nowhere else (decision 32, and stats since Number and
+// Choice).
 func TestIncludeAllTypes(t *testing.T) {
 	e := newEnv(t).seed().future()
 	for _, args := range [][]string{
@@ -169,7 +170,7 @@ func TestIncludeAllTypes(t *testing.T) {
 	lists := map[string]bool{}
 	for i, r := range e.srv.Logged() {
 		q := e.srv.LoggedQueries()[i]
-		list := strings.HasPrefix(r, "GET ") && (strings.HasSuffix(r, "/api/tracks") || strings.HasSuffix(r, "/api/ticks") || strings.HasSuffix(r, "/api/notes"))
+		list := strings.HasPrefix(r, "GET ") && (strings.HasSuffix(r, "/api/tracks") || strings.HasSuffix(r, "/api/ticks") || strings.HasSuffix(r, "/api/notes") || strings.HasSuffix(r, "/api/stats"))
 		if list {
 			lists[r] = true
 		}
@@ -177,7 +178,7 @@ func TestIncludeAllTypes(t *testing.T) {
 			t.Errorf("%s?%s", r, q)
 		}
 	}
-	if len(lists) != 3 {
+	if len(lists) != 4 {
 		t.Errorf("lists called: %v", lists)
 	}
 }

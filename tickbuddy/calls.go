@@ -5,6 +5,7 @@ package tickbuddy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -12,13 +13,14 @@ import (
 	"strings"
 )
 
-// allTypes asks a server to include tracks of types this package doesn't
-// know, which it leaves out of /tracks, /ticks and /notes otherwise; an
-// older server ignores it. Track.KnownType tells them apart.
+// allTypes asks a server to include tracks of every type, which it leaves
+// out of /tracks, /ticks, /notes and /stats otherwise unless they are yes/no
+// or counter tracks, so that a client predating a type never meets it; an
+// older server ignores it. Track.Known tells them apart.
 func allTypes() url.Values { return url.Values{"includeAllTypes": {"true"}} }
 
 // Tracks lists the tracks in journal order, of every type (see
-// Track.KnownType). Archived tracks are included only when includeArchived
+// Track.Known). Archived tracks are included only when includeArchived
 // is set and the server has archivedTracks (an older server has no archived
 // tracks to show).
 func (c *Client) Tracks(ctx context.Context, includeArchived bool) ([]Track, error) {
@@ -262,6 +264,77 @@ func (c *Client) Add(ctx context.Context, trackID int, date Date, delta int, not
 	return c.setCount(ctx, trackID, date, max(0, cur+delta), note, false)
 }
 
+// SetNumber sets a Number track on date to value, a number as the API takes
+// it (ValidNumber: 10.4, -1.5, with a point and no grouping), sent as a JSON
+// string so that it never passes through a float. Text that isn't one is
+// ErrBadNumber before anything is sent; to clear the day use ClearValue. The
+// server rounds the value to the track's decimal places and refuses (400,
+// ErrBadRequest with its message) a negative value on a track that doesn't
+// allow them and one beyond its limit. Result.Value is the stored value, as
+// a Decimal. note works as for SetYesNo.
+func (c *Client) SetNumber(ctx context.Context, trackID int, date Date, value string, note *NoteEdit) (Result, error) {
+	value = strings.TrimSpace(value)
+	if !numberForm.MatchString(value) {
+		return Result{}, &Error{Kind: ErrBadNumber, Message: fmt.Sprintf("%q isn't a number such as 10.4", value)}
+	}
+	return c.setValue(ctx, trackID, date, value, note, Track{Type: TypeNumber})
+}
+
+// SetChoice sets a Choice track on date to the option in place (see
+// ResolveOption). note works as for SetYesNo.
+func (c *Client) SetChoice(ctx context.Context, trackID int, date Date, place int, note *NoteEdit) (Result, error) {
+	return c.setValue(ctx, trackID, date, place, note, Track{Type: TypeChoice})
+}
+
+// ClearValue clears a Number or Choice track's day, leaving it without a
+// value; the server refuses it on other types. Result.Value is null, also
+// when the day was already empty. note works as for SetYesNo.
+func (c *Client) ClearValue(ctx context.Context, trackID int, date Date, note *NoteEdit) (Result, error) {
+	return c.setValue(ctx, trackID, date, nil, note, Track{Type: TypeNumber})
+}
+
+// setValue sends a Number or Choice value (nil clears) and reads the answer
+// as a value of kind's type. It sets a state, so it is retried as SetCount
+// is. The answer isn't compared with what was sent (Result.Archived).
+func (c *Client) setValue(ctx context.Context, trackID int, date Date, value any, note *NoteEdit, kind Track) (Result, error) {
+	if err := c.checkNote(ctx, note); err != nil {
+		return Result{}, err
+	}
+	var a valueAnswer
+	body := setBody{TrackID: trackID, Date: date.String(), Value: value, noteFields: note.fields()}
+	err := c.do(ctx, request{method: http.MethodPost, path: "/ticks/set", body: body, retry: note.repeatable()}, &a)
+	if text, ok, err := c.appendAfterConflict(ctx, err, trackID, date, note); ok {
+		// The 409 carries no value, and the server rounds, so read it.
+		v, err := c.storedValue(ctx, trackID, date)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Value: ValueFor(kind, v), Note: &text}, nil
+	} else if err != nil {
+		return Result{}, err
+	}
+	r := Result{Value: ValueFor(kind, a.Value), Note: a.Note}
+	if note != nil && r.Note == nil {
+		empty := ""
+		r.Note = &empty
+	}
+	return r, nil
+}
+
+// storedValue reads one track's stored value on date, null without a tick.
+func (c *Client) storedValue(ctx context.Context, trackID int, date Date) (Value, error) {
+	ticks, err := c.Ticks(ctx, date, date)
+	if err != nil {
+		return Value{}, err
+	}
+	for _, t := range ticks {
+		if t.TrackID == trackID && t.Date == date {
+			return t.Value, nil
+		}
+	}
+	return NullValue(), nil
+}
+
 // dayValue reads one track's stored value on date (0 without a tick).
 func (c *Client) dayValue(ctx context.Context, trackID int, date Date) (int, error) {
 	ticks, err := c.Ticks(ctx, date, date)
@@ -322,8 +395,8 @@ func NoteContains(note, text string) bool {
 }
 
 // Stats reads the stat cards for every track (trackID 0) or one track, as on
-// today. includeRuns adds every streak and break. It needs the server's
-// stats flag: no streak maths happens in Go.
+// today, of every type. includeRuns adds every streak and break. It needs
+// the server's stats flag: no streak maths happens in Go.
 func (c *Client) Stats(ctx context.Context, today Date, trackID int, includeRuns, includeArchived bool) ([]Stats, error) {
 	if err := c.need(ctx, FeatureStats); err != nil {
 		return nil, err
@@ -361,6 +434,7 @@ func (c *Client) stats(ctx context.Context, q url.Values, trackID int, includeRu
 	if includeArchived {
 		q.Set("includeArchived", "true")
 	}
+	q.Set("includeAllTypes", "true")
 	var raw []json.RawMessage
 	if err := c.do(ctx, request{method: http.MethodGet, path: "/stats", query: q, retry: true}, &raw); err != nil {
 		return nil, err
@@ -450,15 +524,66 @@ func (c *Client) DeleteNote(ctx context.Context, trackID int, date Date) error {
 	return c.do(ctx, request{method: http.MethodDelete, path: "/notes", query: q, retry: true}, nil)
 }
 
-// CreateTrack creates a track of kind TypeYesNo or TypeCounter. It is never
+// TrackSettings are the settings a new Number or Choice track can be created
+// with. A nil field is not sent and the server uses its default: no unit,
+// 1 decimal place, no negative values, a plain list. A Choice needs Options.
+type TrackSettings struct {
+	Unit          *string
+	DecimalPlaces *int
+	AllowNegative *bool
+	Options       []string // labels, in place order
+	OrderedScale  *bool
+}
+
+// CreateTrack creates a track of kind TypeYesNo, TypeCounter, TypeNumber or
+// TypeChoice, with settings s (nil sends none). A Number needs the server's
+// numberTracks flag and a Choice its choiceTracks flag, checked before
+// sending. The server checks the settings (2 to 99 options, labels of 1 to
+// 255 characters and no two alike, decimal places 0 to 3, no settings of
+// another type) and refuses with ErrBadRequest and its message. It is never
 // retried, since a lost answer would create the track twice.
-func (c *Client) CreateTrack(ctx context.Context, name, kind string) (Track, error) {
+func (c *Client) CreateTrack(ctx context.Context, name, kind string, s *TrackSettings) (Track, error) {
+	switch kind {
+	case TypeNumber:
+		if err := c.need(ctx, FeatureNumberTracks); err != nil {
+			return Track{}, err
+		}
+	case TypeChoice:
+		if err := c.need(ctx, FeatureChoiceTracks); err != nil {
+			return Track{}, err
+		}
+	}
+	body := struct {
+		Name          string   `json:"name"`
+		Type          string   `json:"type"`
+		Unit          *string  `json:"unit,omitempty"`
+		DecimalPlaces *int     `json:"decimalPlaces,omitempty"`
+		AllowNegative *bool    `json:"allowNegative,omitempty"`
+		Options       []string `json:"options,omitempty"`
+		OrderedScale  *bool    `json:"orderedScale,omitempty"`
+	}{Name: name, Type: kind}
+	if s != nil {
+		body.Unit, body.DecimalPlaces, body.AllowNegative, body.Options, body.OrderedScale = s.Unit, s.DecimalPlaces, s.AllowNegative, s.Options, s.OrderedScale
+	}
+	var t Track
+	err := c.do(ctx, request{method: http.MethodPost, path: "/tracks", body: body}, &t)
+	return t, err
+}
+
+// RenameOption gives the option in place of a Choice track a new label and
+// returns the whole track. It needs the server's choiceTracks flag. An
+// option the track doesn't have is ErrOptionNotFound; an archived track is
+// ErrReadOnly.
+func (c *Client) RenameOption(ctx context.Context, trackID, place int, label string) (Track, error) {
+	if err := c.need(ctx, FeatureChoiceTracks); err != nil {
+		return Track{}, err
+	}
 	var t Track
 	body := struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	}{name, kind}
-	err := c.do(ctx, request{method: http.MethodPost, path: "/tracks", body: body}, &t)
+		Label string `json:"label"`
+	}{label}
+	path := "/tracks/" + strconv.Itoa(trackID) + "/options/" + strconv.Itoa(place)
+	err := c.do(ctx, request{method: http.MethodPut, path: path, body: body, retry: true}, &t)
 	return t, err
 }
 

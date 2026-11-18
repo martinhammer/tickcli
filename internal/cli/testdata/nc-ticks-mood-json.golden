@@ -1,0 +1,1 @@
+{"from":"2026-10-15","to":"2026-10-18","tracks":[{"track":"Mum's mood","trackId":10,"type":"choice","days":[{"date":"2026-10-15","value":1,"label":"Excited"},{"date":"2026-10-16","value":null},{"date":"2026-10-17","value":3,"label":"Normal"},{"date":"2026-10-18","value":2,"label":"Happy","note":"Calmer after lunch"}]}]}

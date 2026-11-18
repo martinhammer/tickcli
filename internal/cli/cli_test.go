@@ -255,7 +255,7 @@ func TestExitCodes(t *testing.T) {
 		{"bad date", nil, []string{"tick", "Exercise", "-d", "2026-02-30"}, 2, "not a date"},
 		{"bad count", nil, []string{"set", "Cups of coffee", "x"}, 2, "isn't a count"},
 		{"add zero", nil, []string{"add", "Cups of coffee", "0"}, 2, "other than 0"},
-		{"set number first", nil, []string{"set", "5", "Cups of coffee"}, 2, "the track comes first: tickcli set <track> <n>"},
+		{"set number first", nil, []string{"set", "5", "Cups of coffee"}, 2, "the track comes first: tickcli set <track> <value>"},
 		{"add number first", nil, []string{"add", "2", "Cups of coffee"}, 2, "the track comes first"},
 		{"add negative first", nil, []string{"add", "-1", "Cups of coffee"}, 2, "the track comes first"},
 		{"type mismatch", nil, []string{"tick", "Cups of coffee"}, 2, "Cups of coffee is a counter; use `tickcli add` or `tickcli set`"},

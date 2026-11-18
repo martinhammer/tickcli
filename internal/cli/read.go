@@ -125,7 +125,11 @@ func (a *App) weekCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "week",
 		Short: "The last 7 days of every track, today first, with the current run",
-		Args:  args(0, 0),
+		Long: `The last 7 days of every track, today first, with the current run.
+Each day's column is 2 wide, or, with a number or choice track shown, wide
+enough for the longest number; longer choice labels are cut. Piped and
+--json, every value is in full.`,
+		Args: args(0, 0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			today := a.today()
@@ -164,6 +168,8 @@ func (a *App) weekCmd() *cobra.Command {
 			type dayCell struct {
 				Date  tickbuddy.Date  `json:"date"`
 				Value tickbuddy.Value `json:"value"`
+				Unit  *string         `json:"unit,omitempty"`
+				Label *string         `json:"label,omitempty"`
 			}
 			type row struct {
 				Track         string         `json:"track"`
@@ -172,13 +178,16 @@ func (a *App) weekCmd() *cobra.Command {
 				Current       *tickbuddy.Run `json:"current"`
 				UpToYesterday bool           `json:"upToYesterday"`
 				stats         *tickbuddy.Stats
+				track         tickbuddy.Track
 				newer         bool
 			}
 			rows := []row{}
 			for _, t := range a.visible(tracks) {
-				r := row{Track: t.Name, TrackID: t.ID, stats: statsByID[t.ID], newer: !t.KnownType()}
+				r := row{Track: t.Name, TrackID: t.ID, stats: statsByID[t.ID], track: t, newer: !t.Known()}
 				for _, d := range days {
-					r.Days = append(r.Days, dayCell{d, j.value(t, d)})
+					c := dayCell{Date: d, Value: j.value(t, d)}
+					c.Unit, c.Label = valueExtras(t, c.Value)
+					r.Days = append(r.Days, c)
 				}
 				if r.stats != nil {
 					r.Current, r.UpToYesterday = r.stats.Current, r.stats.UpToYesterday
@@ -193,39 +202,69 @@ func (a *App) weekCmd() *cobra.Command {
 				for _, r := range rows {
 					f := []string{flat(r.Track)}
 					for _, c := range r.Days {
-						f = append(f, flat(c.Value.String()))
+						f = append(f, a.plainValue(r.track, c.Value))
 					}
 					f = append(f, runPlain(r.stats))
 					a.printf("%s\n", strings.Join(f, "\t"))
 				}
 				return nil
 			}
+			// A Number's unit follows its name.
+			name := func(r row) (string, string) {
+				if u := flat(r.track.Unit); r.track.IsNumber() && u != "" {
+					return flat(r.Track), " (" + u + ")"
+				}
+				return flat(r.Track), ""
+			}
 			w := 0
 			for _, r := range rows {
-				w = max(w, width(flat(r.Track)))
+				n, u := name(r)
+				w = max(w, width(n+u))
 			}
 			w += 2
-			// Day columns fit the weekday headings and the widest value; a
-			// value of a track of a newer type is cut to fit them instead.
+			// With a Number or Choice track shown (a Choice only by its
+			// label), every day column is at least 6 wide and fits the
+			// widest Number and count, right-aligned, and labels are cut to
+			// fit; otherwise columns are 2 wide, or fit the widest count.
+			// A value of a track of a newer type is cut to fit either way.
+			wide := false
+			for _, r := range rows {
+				wide = wide || r.track.IsNumber() || r.track.IsChoice() && !a.opts.numeric
+			}
 			col := 2
+			if wide {
+				col = 6
+			}
 			for _, r := range rows {
 				for _, c := range r.Days {
-					if !r.newer {
-						col = max(col, width(symbol(c.Value)))
+					if !r.newer && (!wide || !r.track.IsChoice()) {
+						col = max(col, width(a.cell(r.track, c.Value, 1<<30)))
 					}
 				}
 			}
+			// cellText is s in its column, shown as painted.
+			cellText := func(s, painted string) string {
+				if wide {
+					return strings.Repeat(" ", col-width(s)) + painted + " "
+				}
+				return painted + strings.Repeat(" ", col+1-width(s))
+			}
 			var head strings.Builder
 			for _, d := range days {
-				head.WriteString(pad(d.Weekday().String()[:2], col+1))
+				wd := d.Weekday().String()[:2]
+				head.WriteString(cellText(wd, wd))
 			}
 			a.printf("%s%s\n", strings.Repeat(" ", w), a.paint(dim, strings.TrimRight(head.String(), " ")))
 			for _, r := range rows {
 				var line strings.Builder
-				line.WriteString(pad(flat(r.Track), w))
+				n, u := name(r)
+				line.WriteString(n + a.paint(dim, u) + strings.Repeat(" ", w-width(n+u)))
 				for _, c := range r.Days {
-					sym := cell(c.Value, col)
-					line.WriteString(a.paintSymbol(sym) + strings.Repeat(" ", col+1-width(sym)))
+					sym := a.cell(r.track, c.Value, col)
+					line.WriteString(cellText(sym, a.paintSymbol(sym)))
+				}
+				if wide {
+					line.WriteString("  ")
 				}
 				line.WriteString(" " + runText(r.stats) + a.newerLabel(r.newer))
 				a.printf("%s\n", line.String())
@@ -242,7 +281,8 @@ func (a *App) statsCmd() *cobra.Command {
 		Short: "Totals, weekly mean, streaks and breaks, as on Analytics",
 		Long: `Totals, weekly mean, streaks and breaks, as on Analytics: of all time, or of
 a period with --from and --to (either alone) or --year. A period needs the
-server's period stats (statsPeriod).`,
+server's period stats (statsPeriod). On number and choice tracks, every
+count is of days with an entry.`,
 		Example: `  tickcli stats
   tickcli stats Exercise --from -30
   tickcli stats Exercise --year 2025
@@ -580,6 +620,10 @@ func (a *App) tracksCmd() *cobra.Command {
 					line += "  " + a.paint(dim, strings.Join(m, ", "))
 				}
 				a.printf("%s\n", strings.TrimRight(line, " "))
+				// A Number's or Choice's settings, dimmed, under its name.
+				if text := settingsText(t); text != "" {
+					a.printf("%s%s\n", strings.Repeat(" ", wID+6), a.paint(dim, text))
+				}
 			}
 			return nil
 		},

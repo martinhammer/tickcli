@@ -126,39 +126,111 @@ func pad(s string, width int) string {
 
 func width(s string) int { return utf8.RuneCountInString(s) }
 
-// symbol is a day's value as the today view shows it: a value of a track of
-// a newer type as its JSON, "·" for none.
-func symbol(v tickbuddy.Value) string {
-	if raw := v.Raw(); raw != nil {
-		if string(raw) == "null" {
-			return "·"
-		}
-		return flat(string(raw))
-	}
-	if v.IsBool() {
-		if v.Bool() {
-			return "✓"
-		}
+// symbol is a day's value on t as the today view shows it: ✓ or a count, a
+// Number at its track's decimal places with its unit, a Choice's label; "·"
+// for none; a value of a track of a newer type as its JSON. With --numeric,
+// a Choice's place, and 1 or 0 for yes/no and every count.
+func (a *App) symbol(t tickbuddy.Track, v tickbuddy.Value) string {
+	switch {
+	case v.IsNull():
 		return "·"
-	}
-	if v.Int() == 0 {
+	case v.Raw() != nil:
+		return flat(string(v.Raw()))
+	case v.IsBool() && a.opts.numeric:
+		return fmt.Sprint(v.Int())
+	case v.IsBool() && v.Bool():
+		return "✓"
+	case v.IsBool():
+		return "·"
+	case t.IsNumber():
+		if u := flat(t.Unit); u != "" {
+			return number(t, v) + " " + u
+		}
+		return number(t, v)
+	case t.IsChoice():
+		return a.choice(t, v)
+	case v.Int() == 0 && !a.opts.numeric:
 		return "·"
 	}
 	return fmt.Sprint(v.Int())
 }
 
-// cell is symbol cut to fit n columns of week's grid: a string without its
-// quotes, and what doesn't fit ending in "…".
-func cell(v tickbuddy.Value, n int) string {
-	sym := symbol(v)
+// plainValue is a day's value on t for plain output: yes/no or a count, a
+// Number at its track's decimal places without its unit, a Choice's label,
+// "" for none, a value of a track of a newer type as its JSON. With
+// --numeric, a Choice's place, and 1 or 0 for yes/no.
+func (a *App) plainValue(t tickbuddy.Track, v tickbuddy.Value) string {
+	switch {
+	case v.IsNull():
+		return ""
+	case v.Raw() != nil:
+		return flat(string(v.Raw()))
+	case v.IsBool() && a.opts.numeric:
+		return fmt.Sprint(v.Int())
+	case t.IsNumber():
+		return number(t, v)
+	case t.IsChoice():
+		return a.choice(t, v)
+	}
+	return v.String()
+}
+
+// number is a Number's value at its track's decimal places.
+func number(t tickbuddy.Track, v tickbuddy.Value) string {
+	if d, ok := v.Decimal(); ok {
+		return d.Format(t.DecimalPlaces)
+	}
+	return v.String()
+}
+
+// choice is a Choice's label, or its place with --numeric; "#5" for a
+// place the track has no option for.
+func (a *App) choice(t tickbuddy.Track, v tickbuddy.Value) string {
+	o, ok := t.Option(v.Int())
+	switch {
+	case !ok:
+		return fmt.Sprintf("#%d", v.Int())
+	case a.opts.numeric:
+		return fmt.Sprint(v.Int())
+	}
+	return flat(o.Label)
+}
+
+// cell is a day's value on t in week's grid: symbol without a Number's unit
+// (the row's name has it) and a string without its quotes, cut to fit n
+// columns, what doesn't fit ending in "…".
+func (a *App) cell(t tickbuddy.Track, v tickbuddy.Value, n int) string {
+	sym := a.symbol(t, v)
 	var s string
 	if raw := v.Raw(); len(raw) > 0 && raw[0] == '"' && json.Unmarshal(raw, &s) == nil {
 		sym = flat(s)
+	} else if t.IsNumber() && !v.IsNull() {
+		sym = number(t, v)
 	}
-	if width(sym) <= n {
-		return sym
+	return cut(sym, n)
+}
+
+// cut cuts s to n columns, ending in "…" when it doesn't fit.
+func cut(s string, n int) string {
+	if width(s) <= n {
+		return s
 	}
-	return string([]rune(sym)[:n-1]) + "…"
+	return string([]rune(s)[:n-1]) + "…"
+}
+
+// valueExtras are what JSON output adds next to a day's value on t: a
+// Number track's unit (when it has one, also on a day without a value) and
+// a Choice's label (with a value whose option exists).
+func valueExtras(t tickbuddy.Track, v tickbuddy.Value) (unit, label *string) {
+	if t.IsNumber() && t.Unit != "" {
+		unit = &t.Unit
+	}
+	if t.IsChoice() && !v.IsNull() && v.Raw() == nil {
+		if o, ok := t.Option(v.Int()); ok {
+			label = &o.Label
+		}
+	}
+	return unit, label
 }
 
 // newerLabel follows a value of a track of a type this Tickcli doesn't know
@@ -219,10 +291,42 @@ func runPlain(st *tickbuddy.Stats) string {
 // this Tickcli doesn't know.
 func typeName(t tickbuddy.Track) string {
 	switch {
-	case !t.KnownType():
+	case !t.Known():
 		return flat(t.Type)
-	case t.IsCounter():
-		return "counter"
+	case t.Type == tickbuddy.TypeYesNo:
+		return "yes/no"
 	}
-	return "yes/no"
+	return t.Type
+}
+
+// settingsText is the line tracks shows under a Number or Choice track:
+// "km · 1 decimal place · negative values allowed", "#1 Excited · #2 Happy ·
+// ordered scale"; "" for other types.
+func settingsText(t tickbuddy.Track) string {
+	var parts []string
+	switch {
+	case t.IsNumber():
+		if u := flat(t.Unit); u != "" {
+			parts = append(parts, u)
+		}
+		switch t.DecimalPlaces {
+		case 0:
+			parts = append(parts, "no decimal places")
+		case 1:
+			parts = append(parts, "1 decimal place")
+		default:
+			parts = append(parts, fmt.Sprintf("%d decimal places", t.DecimalPlaces))
+		}
+		if t.AllowNegative {
+			parts = append(parts, "negative values allowed")
+		}
+	case t.IsChoice():
+		for _, o := range t.Options {
+			parts = append(parts, fmt.Sprintf("#%d %s", o.Value, flat(o.Label)))
+		}
+		if t.OrderedScale {
+			parts = append(parts, "ordered scale")
+		}
+	}
+	return strings.Join(parts, " · ")
 }

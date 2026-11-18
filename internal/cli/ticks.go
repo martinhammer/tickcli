@@ -16,13 +16,17 @@ func (a *App) ticksCmd() *cobra.Command {
 		Use:   "ticks [track] [-d date | --from date [--to date] | --year YYYY]",
 		Short: "A track's value on a day or on each day of a range (default: today)",
 		Long: `A track's value on a day (default: today), or on each day of a range with
---from and --to or --year. Every day is listed, an unticked one as no or 0.
+--from and --to or --year. Every day is listed, an unticked one as no or 0,
+and a number or choice day without a value as · (piped: an empty field).
 Without a track, the today view's tracks for each day, as tickcli shows them;
 --private and --archived add those.
 
-Piped, each line is the date, the track, yes/no or the count, and the note
-if any, separated by tabs.`,
+Piped, each line is the date, the track, the value, and the note if any,
+separated by tabs. The value is yes/no, the count, a number at its track's
+decimal places without its unit, or a choice's label (with --numeric, its
+place, and 1 or 0 for yes/no). --json gives a number's stored value exactly.`,
 		Example: `  tickcli ticks "Nightly backup" | cut -f3
+  tickcli ticks Run --from -6 | cut -f3
   tickcli ticks Exercise --year 2025 --json | jq '[.tracks[].days[] | select(.value)] | length'
   tickcli ticks "Cups of coffee" --from -6
   tickcli ticks -d yesterday`,
@@ -70,6 +74,8 @@ if any, separated by tabs.`,
 				type day struct {
 					Date  tickbuddy.Date  `json:"date"`
 					Value tickbuddy.Value `json:"value"`
+					Unit  *string         `json:"unit,omitempty"`
+					Label *string         `json:"label,omitempty"`
 					Note  *string         `json:"note,omitempty"`
 				}
 				type row struct {
@@ -83,7 +89,7 @@ if any, separated by tabs.`,
 					r := row{Track: t.Name, TrackID: t.ID, Type: t.Type}
 					for _, d := range days {
 						v := j.row(t, d)
-						r.Days = append(r.Days, day{d, v.Value, v.Note})
+						r.Days = append(r.Days, day{d, v.Value, v.Unit, v.Label, v.Note})
 					}
 					rows = append(rows, r)
 				}
@@ -157,11 +163,11 @@ func (a *App) printTrackDays(t tickbuddy.Track, days []tickbuddy.Date, j journal
 	dw, w := 0, 1
 	for _, d := range days {
 		dw = max(dw, width(label(d)))
-		w = max(w, width(symbol(j.row(t, d).Value)))
+		w = max(w, width(a.symbol(t, j.row(t, d).Value)))
 	}
 	for _, d := range days {
 		r := j.row(t, d)
-		sym := symbol(r.Value)
+		sym := a.symbol(t, r.Value)
 		a.printf("  %s   %s%s%s\n", pad(label(d), dw), strings.Repeat(" ", w-width(sym)), a.paintSymbol(sym), a.newerLabel(r.newer))
 		if r.Note != nil {
 			for _, l := range noteLines(*r.Note) {
